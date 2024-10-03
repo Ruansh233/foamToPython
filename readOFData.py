@@ -32,7 +32,7 @@ def extractList(content, data_type):
         # Convert to a numpy array in one go
         data_array = np.fromstring(joined_coords, sep=" ", dtype=int)
 
-    if data_type == "scalar":
+    elif data_type == "scalar":
         # Join all lines and replace unwanted characters once
         joined_coords = b" ".join(string_coords).replace(b"\n", b"")
         # Convert to a numpy array in one go
@@ -74,7 +74,7 @@ def extractListList(content, data_type):
             # Convert to a numpy array in one go
             data_list.append(np.fromstring(joined_coords, sep=" ", dtype=int))
 
-        if data_type == "scalar":
+        elif data_type == "scalar":
             # Join all lines and replace unwanted characters once
             joined_coords = b" ".join(string_coords).replace(b"\n", b"")
             # Convert to a numpy array in one go
