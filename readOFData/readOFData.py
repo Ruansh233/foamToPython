@@ -1,5 +1,6 @@
 import numpy as np
 import sys
+from .headerEnd import *
 
 
 def num_list(subcontent):
@@ -98,3 +99,40 @@ def extractListList(content, data_type):
         subcontent = subcontent[data_start_idx + num_data_ + 1 :]
 
     return np.array(data_list)
+
+
+def writeList(data, data_type, filename, object_name = "None"):
+    """
+    Write data to a file
+    :param data: data to write
+    :param data_type: data type
+    :param filename: file name
+    :return: None
+    """
+
+    with open(filename, "w") as f:
+        output = []
+
+        thisHeader = header.replace("class       vectorField;", f"class       {data_type}Field;")
+        if object_name != "None":
+            thisHeader = thisHeader.replace("object      data;", f"object      {object_name};")
+            output.append(thisHeader + "\n\n")
+        else:
+            output.append(thisHeader + "\n\n")
+
+        output.append(f"{data.shape[0]}\n")
+        output.append("(\n")
+        if data_type == "label":
+            for point in data:
+                output.append(f"{point:d}\n")
+        elif data_type == "scalar":
+            for point in data:
+                output.append(f"{point:.8e}\n")
+        elif data_type == "vector":
+            for point in data:
+                output.append(f"({point[0]:.8e} {point[1]:.8e} {point[2]:.8e})\n")
+        else:
+            sys.exit("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
+        output.append(")\n")
+        output.append(ender)
+        f.write("".join(output))
