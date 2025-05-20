@@ -12,11 +12,21 @@ def num_list(subcontent):
 
 
 def readList(filename, data_type):
+    try:
+        with open(filename, "rb") as f:
+            pass
+    except FileNotFoundError:
+        sys.exit(f"File {filename} not found. Please check the file path.")
     with open(f"{filename}", "rb") as f:
         return extractList(f.readlines(), data_type)
 
 
 def readListList(filename, data_type):
+    try:
+        with open(filename, "rb") as f:
+            pass
+    except FileNotFoundError:
+        sys.exit(f"File {filename} not found. Please check the file path.")
     with open(f"{filename}", "rb") as f:
         return extractListList(f.readlines(), data_type)
 
