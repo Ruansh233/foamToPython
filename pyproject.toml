@@ -8,12 +8,12 @@ authors = [
     {name = "Shenhui_Ruan", email = "shenhui.ruan@kit.edu"}
 ]
 description = "A py package to read OpenFOAM data"
-version = "0.0.2"
+version = "0.0.3"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
     "numpy"
 ]
 
-[tool.setuptools]
-packages = ["readOFData"]
+[tool.setuptools.packages.find]
+where = ["src"]
