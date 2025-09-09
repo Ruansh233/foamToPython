@@ -1,19 +1,43 @@
 import numpy as np
 import sys
 import re
+from typing import List, Dict, Any, Optional, Tuple, Union
 from .headerEnd import *
 from .readOFList import _check_data_type
 
 
 class OFField:
-    def __init__(self, filename, data_type):
+    """
+    Class to read and write OpenFOAM field files (scalar/vector).
+    """
+
+    filename: str
+    fieldName: str
+    timeDir: str
+    data_type: str
+    dimensions: np.ndarray
+    internalField: Union[float, np.ndarray]
+    internal_field_type: Optional[str]
+    num_data_: Optional[int]
+    boundaryField: Dict[str, Dict[str, Any]]
+
+    def __init__(self, filename: str, data_type: str) -> None:
+        """
+        Initialize OFField object.
+        Args:
+            filename (str): Path to the OpenFOAM field file.
+            data_type (str): Type of field ('scalar' or 'vector').
+        """
         self.filename = filename
         self.fieldName = filename.split("/")[-1]
         self.timeDir = filename.split("/")[-2]
         self.data_type = data_type
         self._readField()
 
-    def _readField(self):
+    def _readField(self) -> None:
+        """
+        Read the field file and parse internal and boundary fields.
+        """
         with open(f"{self.filename}", "rb") as f:
             content = f.readlines()
             data_idx, boundary_start_idx, dim_idx = self._num_field(content)
@@ -33,7 +57,12 @@ class OFField:
             boundary_string = content[boundary_start_idx:]
             self._process_boundary(boundary_string, self.data_type)
 
-    def _process_uniform(self, line):
+    def _process_uniform(self, line: str) -> None:
+        """
+        Process uniform internal field value.
+        Args:
+            line (str): Line containing the uniform value.
+        """
         if self.data_type == "scalar":
             # Extract the scalar value after 'uniform'
             match = re.search(r"uniform\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?|\d+)", line)
@@ -55,7 +84,12 @@ class OFField:
             else:
                 raise ValueError("Invalid uniform vector format")
 
-    def _process_field(self, string_coords):
+    def _process_field(self, string_coords: List[bytes]) -> None:
+        """
+        Process nonuniform internal field values.
+        Args:
+            string_coords (list): List of byte strings containing field values.
+        """
         if self.data_type == "scalar":
             # Join all lines and replace unwanted characters once
             joined_coords = b" ".join(string_coords).replace(b"\n", b"")
@@ -78,7 +112,13 @@ class OFField:
         else:
             sys.exit("Unknown data_type. please use 'scalar' or 'vector'.")
 
-    def _process_boundary(self, lines, data_type):
+    def _process_boundary(self, lines: List[Union[str, bytes]], data_type: str) -> None:
+        """
+        Process boundaryField section and extract patch properties.
+        Args:
+            lines (list): List of lines (bytes or str) for boundaryField.
+            data_type (str): Type of field ('scalar' or 'vector').
+        """
         # decode bytes to string if necessary
         if isinstance(lines[0], bytes):
             lines = [line.decode("utf-8") for line in lines]
@@ -224,7 +264,16 @@ class OFField:
 
         self.boundaryField = bc_dict
 
-    def _num_field(self, subcontent):
+    def _num_field(
+        self, subcontent: List[bytes]
+    ) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+        """
+        Find indices for dimensions, internalField, and boundaryField sections.
+        Args:
+            subcontent (list): List of file lines (bytes).
+        Returns:
+            tuple: (data_idx, boundary_idx, dim_idx)
+        """
         dim_idx = None
         data_size = None
         data_idx = None
@@ -260,11 +309,18 @@ class OFField:
         self.num_data_ = data_size
         return data_idx, boundary_idx, dim_idx
 
-    def writeField(self, fieldPath, timeDir=None, fieldName=None):
+    def writeField(
+        self,
+        fieldPath: str,
+        timeDir: Optional[str] = None,
+        fieldName: Optional[str] = None,
+    ) -> None:
         """
-        Write data to a file
-        :param fieldPath: str, path to the output file
-        :return: None
+        Write field data to a file in OpenFOAM format.
+        Args:
+            fieldPath (str): Path to output file.
+            timeDir (str, optional): Time directory name.
+            fieldName (str, optional): Field name.
         """
         _timeDir = timeDir if timeDir is not None else fieldPath.split("/")[-2]
         _fieldName = fieldName if fieldName is not None else fieldPath.split("/")[-1]
@@ -359,13 +415,26 @@ class OFField:
             f.write(ender)
 
 
-def _parse_vector_string(s):
-    """Parse a single vector string like '(0 0 1.0)' into a NumPy array."""
+def _parse_vector_string(s: str) -> np.ndarray:
+    """
+    Parse a single vector string like '(0 0 1.0)' into a NumPy array.
+    Args:
+        s (str): Vector string.
+    Returns:
+        np.ndarray: Parsed vector.
+    """
     s = s.strip("()")
     return np.array([float(x) for x in s.split()])
 
 
-def _process_dimensions(line):
+def _process_dimensions(line: str) -> np.ndarray:
+    """
+    Parse dimensions line from OpenFOAM file.
+    Args:
+        line (str): Line containing dimensions.
+    Returns:
+        np.ndarray: Array of dimensions.
+    """
     match = re.search(
         r"\[\s*-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s*\]\s*", line
     )
@@ -376,16 +445,13 @@ def _process_dimensions(line):
         raise ValueError("Invalid dimensions format")
 
 
-def find_patches(text):
+def find_patches(text: List[str]) -> Any:
     """
-    A generator that reads a large OpenFOAM file line by line and yields
-    complete patch blocks as strings.
-
+    Generator that yields complete patch blocks from OpenFOAM boundaryField file.
     Args:
-        text (list): The lines of the OpenFOAM boundaryField file.
-
+        text (list): Lines of the boundaryField file.
     Yields:
-        str: The full text content of a single patch block.
+        str: Full text content of a single patch block.
     """
     in_boundary = False
     start_boundary = False
