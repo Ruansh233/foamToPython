@@ -157,7 +157,9 @@ class OFField:
                                 if scalar_match:
                                     props[key] = float(scalar_match.group(1))
                                 else:
-                                    raise ValueError(f"Invalid scalar format: {value_str}")
+                                    raise ValueError(
+                                        f"Invalid scalar format: {value_str}"
+                                    )
                             elif data_type == "vector":
                                 # read vector
                                 vec_match = re.match(
@@ -165,9 +167,13 @@ class OFField:
                                     value_str,
                                 )
                                 if vec_match:
-                                    props[key] = _parse_vector_string(vec_match.group(1))
+                                    props[key] = _parse_vector_string(
+                                        vec_match.group(1)
+                                    )
                                 else:
-                                    raise ValueError(f"Invalid vector format: {value_str}")
+                                    raise ValueError(
+                                        f"Invalid vector format: {value_str}"
+                                    )
                         elif value_str.startswith("nonuniform List<vector>"):
                             # read scalar list
                             if data_type == "scalar":
@@ -176,7 +182,9 @@ class OFField:
                                     value_str,
                                 )
                                 if scalar_match:
-                                    props[key] = np.array([float(x) for x in scalar_match])
+                                    props[key] = np.array(
+                                        [float(x) for x in scalar_match]
+                                    )
                                 else:
                                     raise ValueError(
                                         f"Invalid scalar list format: {value_str}"
@@ -252,28 +260,32 @@ class OFField:
         self.num_data_ = data_size
         return data_idx, boundary_idx, dim_idx
 
-    def writeField(self, filename, fieldName=None, timeDir=None):
+    def writeField(self, fieldPath, timeDir=None, fieldName=None):
         """
         Write data to a file
-        :param filename: file name
-        :param fieldName: field name, if None, use the one from the input file
-        :param timeDir: time directory, if None, use the one from the input file
+        :param fieldPath: str, path to the output file
         :return: None
         """
+        _timeDir = timeDir if timeDir is not None else fieldPath.split("/")[-2]
+        _fieldName = fieldName if fieldName is not None else fieldPath.split("/")[-1]
 
-        with open(filename, "w") as f:
+        try:
+            int(_timeDir)
+        except ValueError:
+            sys.exit(
+                "The fieldPath should be like '.../0/U' or '.../100/p'. "
+                "You can provide <timeDir> and <fieldName> to use other formats."
+            )
+
+        with open(fieldPath, "w") as f:
             # write header
-            thisHeader = header.replace("className;", f"vol{self.data_type.capitalize()}Field;")
-            if fieldName is not None:
-                thisHeader = thisHeader.replace("object      data;", f"object      {fieldName};")
-            else:
-                thisHeader = thisHeader.replace(
-                    "object      data;", f"object      {self.fieldName};"
-                )
-            if timeDir is not None:
-                thisHeader = thisHeader.replace("timeDir;", f"{timeDir};")
-            else:
-                thisHeader = thisHeader.replace("timeDir;", f"{self.timeDir};")
+            thisHeader = header.replace(
+                "className;", f"vol{self.data_type.capitalize()}Field;"
+            )
+            thisHeader = thisHeader.replace("timeDir;", f"{_timeDir};")
+            thisHeader = thisHeader.replace(
+                "object      data;", f"object      {_fieldName};"
+            )
             f.write(thisHeader + "\n\n")
 
             # write dimensions as "dimensions      [0 1 -1 0 0 0 0];"
@@ -284,25 +296,25 @@ class OFField:
             # write internalField for scalar or vector
             if self.data_type == "scalar":
                 if self.internal_field_type == "uniform":
-                    f.write(f"internalField   uniform {self.internalField:.8e};\n\n")
+                    f.write(f"internalField   uniform {self.internalField:.8g};\n\n")
                 elif self.internal_field_type == "nonuniform":
                     f.write(f"internalField   nonuniform List<scalar>\n")
                     f.write(f"{self.internalField.shape[0]}\n")
                     f.write("(\n")
                     for point in self.internalField:
-                        f.write(f"{point:.8e}\n")
+                        f.write(f"{point:.8g}\n")
                     f.write(")\n;\n")
             elif self.data_type == "vector":
                 if self.internal_field_type == "uniform":
                     f.write(
-                        f"internalField   uniform ({self.internalField[0]:.8e} {self.internalField[1]:.8e} {self.internalField[2]:.8e});\n\n"
+                        f"internalField   uniform ({self.internalField[0]:.8g} {self.internalField[1]:.8g} {self.internalField[2]:.8g});\n\n"
                     )
                 elif self.internal_field_type == "nonuniform":
                     f.write(f"internalField   nonuniform List<vector>\n")
                     f.write(f"{self.internalField.shape[0]}\n")
                     f.write("(\n")
                     for point in self.internalField:
-                        f.write(f"({point[0]:.8e} {point[1]:.8e} {point[2]:.8e})\n")
+                        f.write(f"({point[0]:.8g} {point[1]:.8g} {point[2]:.8g})\n")
                     f.write(")\n;\n")
 
             # write boundaryField
