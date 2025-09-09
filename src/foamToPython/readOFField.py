@@ -15,13 +15,13 @@ class OFField:
     fieldName: str
     timeDir: str
     data_type: str
-    dimensions: np.ndarray
-    internalField: Union[float, np.ndarray]
+    _dimensions: np.ndarray
+    _internalField: Union[float, np.ndarray]
     internal_field_type: Optional[str]
     num_data_: Optional[int]
-    boundaryField: Dict[str, Dict[str, Any]]
+    _boundaryField: Dict[str, Dict[str, Any]]
 
-    def __init__(self, filename: str, data_type: str) -> None:
+    def __init__(self, filename: str = None, data_type: str = None) -> None:
         """
         Initialize OFField object.
         Args:
@@ -32,7 +32,44 @@ class OFField:
         self.fieldName = filename.split("/")[-1]
         self.timeDir = filename.split("/")[-2]
         self.data_type = data_type
-        self._readField()
+
+        self._dimensions = np.array([])
+        self._internalField = np.array([])
+        self._boundaryField = {}
+        self._field_loaded = False
+
+    @property
+    def dimensions(self):
+        if not self._field_loaded:
+            self._readField()
+            self._field_loaded = True
+        return self._dimensions
+
+    @dimensions.setter
+    def dimensions(self, value):
+        self._dimensions = value
+
+    @property
+    def internalField(self):
+        if not self._field_loaded:
+            self._readField()
+            self._field_loaded = True
+        return self._internalField
+
+    @internalField.setter
+    def internalField(self, value):
+        self._internalField = value
+
+    @property
+    def boundaryField(self):
+        if not self._field_loaded:
+            self._readField()
+            self._field_loaded = True
+        return self._boundaryField
+
+    @boundaryField.setter
+    def boundaryField(self, value):
+        self._boundaryField = value
 
     def _readField(self) -> None:
         """
@@ -42,7 +79,7 @@ class OFField:
             content = f.readlines()
             data_idx, boundary_start_idx, dim_idx = self._num_field(content)
 
-            self.dimensions = _process_dimensions(content[dim_idx].decode("utf-8"))
+            self._dimensions = _process_dimensions(content[dim_idx].decode("utf-8"))
 
             if self.internal_field_type == "uniform":
                 self._process_uniform(content[data_idx].decode("utf-8"))
@@ -67,7 +104,7 @@ class OFField:
             # Extract the scalar value after 'uniform'
             match = re.search(r"uniform\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?|\d+)", line)
             if match:
-                self.internalField = float(match.group(1))
+                self._internalField = float(match.group(1))
             else:
                 raise ValueError("Invalid uniform scalar format")
 
@@ -80,7 +117,7 @@ class OFField:
             )
             if match:
                 vec_str = match.group(1)
-                self.internalField = np.array([float(x) for x in vec_str.split()])
+                self._internalField = np.array([float(x) for x in vec_str.split()])
             else:
                 raise ValueError("Invalid uniform vector format")
 
@@ -94,7 +131,7 @@ class OFField:
             # Join all lines and replace unwanted characters once
             joined_coords = b" ".join(string_coords).replace(b"\n", b"")
             # Convert to a numpy array in one go
-            self.internalField = np.fromstring(joined_coords, sep=" ", dtype=float)
+            self._internalField = np.fromstring(joined_coords, sep=" ", dtype=float)
 
         elif self.data_type == "vector":
             # Join all lines and replace unwanted characters once
@@ -105,7 +142,7 @@ class OFField:
                 .replace(b"\n", b"")
             )
             # Convert to a numpy array in one go
-            self.internalField = np.fromstring(
+            self._internalField = np.fromstring(
                 joined_coords, sep=" ", dtype=float
             ).reshape(self.num_data_, 3)
 
@@ -262,7 +299,7 @@ class OFField:
 
             bc_dict[patch_name] = props
 
-        self.boundaryField = bc_dict
+        self._boundaryField = bc_dict
 
     def _num_field(
         self, subcontent: List[bytes]
@@ -346,37 +383,37 @@ class OFField:
 
             # write dimensions as "dimensions      [0 1 -1 0 0 0 0];"
             f.write(
-                f"dimensions      [{ ' '.join(str(d) for d in self.dimensions) }];\n\n"
+                f"dimensions      [{ ' '.join(str(d) for d in self._dimensions) }];\n\n"
             )
 
             # write internalField for scalar or vector
             if self.data_type == "scalar":
                 if self.internal_field_type == "uniform":
-                    f.write(f"internalField   uniform {self.internalField:.8g};\n\n")
+                    f.write(f"internalField   uniform {self._internalField:.8g};\n\n")
                 elif self.internal_field_type == "nonuniform":
                     f.write(f"internalField   nonuniform List<scalar>\n")
-                    f.write(f"{self.internalField.shape[0]}\n")
+                    f.write(f"{self._internalField.shape[0]}\n")
                     f.write("(\n")
-                    for point in self.internalField:
+                    for point in self._internalField:
                         f.write(f"{point:.8g}\n")
                     f.write(")\n;\n")
             elif self.data_type == "vector":
                 if self.internal_field_type == "uniform":
                     f.write(
-                        f"internalField   uniform ({self.internalField[0]:.8g} {self.internalField[1]:.8g} {self.internalField[2]:.8g});\n\n"
+                        f"internalField   uniform ({self._internalField[0]:.8g} {self._internalField[1]:.8g} {self._internalField[2]:.8g});\n\n"
                     )
                 elif self.internal_field_type == "nonuniform":
                     f.write(f"internalField   nonuniform List<vector>\n")
-                    f.write(f"{self.internalField.shape[0]}\n")
+                    f.write(f"{self._internalField.shape[0]}\n")
                     f.write("(\n")
-                    for point in self.internalField:
+                    for point in self._internalField:
                         f.write(f"({point[0]:.8g} {point[1]:.8g} {point[2]:.8g})\n")
                     f.write(")\n;\n")
 
             # write boundaryField
             f.write("boundaryField\n")
             f.write("{\n")
-            for patch, props in self.boundaryField.items():
+            for patch, props in self._boundaryField.items():
                 f.write(f"    {patch}\n")
                 f.write("    {\n")
                 for key, value in props.items():
