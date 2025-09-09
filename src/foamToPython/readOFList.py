@@ -1,7 +1,7 @@
 import numpy as np
 import sys
 import re
-from readOFData.headerEnd import *
+from .headerEnd import *
 
 
 def _num_list(subcontent):
@@ -127,7 +127,7 @@ def readListList(filename, data_type):
         return _extractListList(f.readlines(), data_type)
 
 
-def _listWriter(data, data_type, filename, object_name="None"):
+def writeList(data, data_type, filename, object_name="None"):
     """
     Write data to a file
     :param data: data to write
