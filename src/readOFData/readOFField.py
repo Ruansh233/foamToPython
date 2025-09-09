@@ -14,10 +14,12 @@ class OFField:
     def _readField(self):
         with open(f"{self.filename}", "rb") as f:
             content = f.readlines()
-            self.num_data_, data_idx, boundary_start_idx = _num_field(content)
+            self.num_data_, data_idx, boundary_start_idx, dim_idx = _num_field(content)
             data_start_idx = data_idx + 2
             # Extract relevant lines containing coordinates
             internal_string = content[data_start_idx : data_start_idx + self.num_data_]
+
+            self.dimensions = _process_dimensions(content[dim_idx].decode("utf-8"))
 
             self._process_field(internal_string, self.data_type)
 
@@ -90,10 +92,13 @@ class OFField:
 
 
 def _num_field(subcontent):
+    dim_idx = None
     data_size = None
     data_idx = None
     boundary_idx = None
     for idx, line in enumerate(subcontent):
+        if b"dimensions" in line:
+            dim_idx = idx
         if data_size is None:
             try:
                 data_size = int(line)
@@ -103,13 +108,24 @@ def _num_field(subcontent):
         if b"boundaryField" in line:
             boundary_idx = idx
             break
-    return data_size, data_idx, boundary_idx
+    return data_size, data_idx, boundary_idx, dim_idx
 
 
 def _parse_vector_string(s):
     """Parse a single vector string like '(0 0 1.0)' into a NumPy array."""
     s = s.strip("()")
     return np.array([float(x) for x in s.split()])
+
+
+def _process_dimensions(line):
+    match = re.search(
+        r"\[\s*-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s*\]\s*", line
+    )
+    if match:
+        dims = match.group(0).strip("[]").split()
+        return np.array([int(d) for d in dims])
+    else:
+        raise ValueError("Invalid dimensions format")
 
 
 def _process_boundary(lines, data_type):
@@ -183,9 +199,10 @@ def _process_boundary(lines, data_type):
                     # convert value string to np.array if it contains numeric data
                     if value_str.startswith("uniform"):
                         if data_type == "scalar":
-                            # read scalar 
+                            # read scalar
                             scalar_match = re.match(
-                                r"uniform\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)", value_str
+                                r"uniform\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)",
+                                value_str,
                             )
                             if scalar_match:
                                 props[key] = float(scalar_match.group(1))
@@ -194,7 +211,8 @@ def _process_boundary(lines, data_type):
                         elif data_type == "vector":
                             # read vector
                             vec_match = re.match(
-                                r"uniform\s+\(\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?\s+[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?\s+[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?\s*)\)", value_str
+                                r"uniform\s+\(\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?\s+[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?\s+[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?\s*)\)",
+                                value_str,
                             )
                             if vec_match:
                                 props[key] = _parse_vector_string(vec_match.group(1))
@@ -210,7 +228,9 @@ def _process_boundary(lines, data_type):
                             if scalar_match:
                                 props[key] = np.array([float(x) for x in scalar_match])
                             else:
-                                raise ValueError(f"Invalid scalar list format: {value_str}")
+                                raise ValueError(
+                                    f"Invalid scalar list format: {value_str}"
+                                )
                         elif data_type == "vector":
                             # read vector list
                             vecs = re.findall(
@@ -222,7 +242,9 @@ def _process_boundary(lines, data_type):
                                     [[float(x) for x in v.split()] for v in vecs]
                                 )
                             else:
-                                raise ValueError(f"Invalid vector list format: {value_str}")
+                                raise ValueError(
+                                    f"Invalid vector list format: {value_str}"
+                                )
                     else:
                         props[key] = value_str
                     key = None
@@ -243,3 +265,72 @@ def _process_boundary(lines, data_type):
         bc_dict[patch_name] = props
 
     return bc_dict
+
+
+def find_patches(text):
+    """
+    A generator that reads a large OpenFOAM file line by line and yields
+    complete patch blocks as strings.
+
+    Args:
+        text (list): The lines of the OpenFOAM boundaryField file.
+
+    Yields:
+        str: The full text content of a single patch block.
+    """
+    in_boundary = False
+    start_boundary = False
+    in_patch = False
+    start_patch = False
+    brace_level = 0
+    current_patch_lines = []
+
+    for line in text:
+        # skip empty lines and comments
+        stripped_line = line.strip()
+        if not stripped_line or stripped_line.startswith("//"):
+            continue
+
+        if "boundaryField" in line:
+            in_boundary = True
+            continue
+
+        if in_boundary and not start_boundary and "{" in line:
+            start_boundary = True
+            continue
+
+        # Look for a patch name (simple check: not starting with whitespace, not just braces)
+        stripped_line = line.strip()
+        if (
+            not in_patch
+            and stripped_line
+            and not stripped_line.startswith("{")
+            and not stripped_line.startswith("}")
+        ):
+            in_patch = True
+            current_patch_lines.append(stripped_line)
+
+        if in_patch:
+            if brace_level == 0 and "{" in stripped_line:
+                start_patch = True
+                brace_level += stripped_line.count("{")
+                continue
+            if not start_patch:
+                continue
+            if "}" in stripped_line:
+                brace_level -= stripped_line.count("}")
+            else:
+                current_patch_lines.append(stripped_line)
+
+            # If brace_level is 0, we have found the end of the patch
+            if brace_level == 0:
+                yield current_patch_lines
+                # Reset for the next patch
+                in_patch = False
+                start_patch = False
+                current_patch_lines = []
+                continue
+
+        # If we find the final closing brace of boundaryField, we can stop
+        if stripped_line.startswith("}") and brace_level == 0 and not in_patch:
+            break
