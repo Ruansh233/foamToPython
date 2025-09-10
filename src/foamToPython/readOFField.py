@@ -15,28 +15,49 @@ class OFField:
     fieldName: str
     timeDir: str
     data_type: str
+    _field_loaded: bool
+    _dimensions: np.ndarray
+    _internalField: Union[float, np.ndarray]
+    internal_field_type: Optional[str]
+    num_data_: Optional[int]
     _dimensions: np.ndarray
     _internalField: Union[float, np.ndarray]
     internal_field_type: Optional[str]
     num_data_: Optional[int]
     _boundaryField: Dict[str, Dict[str, Any]]
 
-    def __init__(self, filename: str = None, data_type: str = None) -> None:
+    def __init__(
+        self, filename: str = None, 
+        data_type: str = None, 
+        read_data: bool = False
+    ) -> None:
         """
         Initialize OFField object.
         Args:
             filename (str): Path to the OpenFOAM field file.
             data_type (str): Type of field ('scalar' or 'vector').
+            read (bool): If True, read the field file upon initialization.
         """
-        self.filename = filename
-        self.fieldName = filename.split("/")[-1]
-        self.timeDir = filename.split("/")[-2]
+        if filename is not None:
+            self.filename = filename
+            self.fieldName = filename.split("/")[-1]
+            self.timeDir = filename.split("/")[-2]
+        else:
+            self.filename = ""
+            self.fieldName = ""
+            self.timeDir = ""
+            
         self.data_type = data_type
+        self.read_data = read_data
 
         self._dimensions = np.array([])
         self._internalField = np.array([])
         self._boundaryField = {}
         self._field_loaded = False
+
+        if self.read_data:
+            self._readField()
+            self._field_loaded = True
 
     @property
     def dimensions(self):

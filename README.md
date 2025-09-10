@@ -1,6 +1,6 @@
 This is an ongoing repository to read OpenFOAM data into numpy array.
-It is faster than __fluidfoam__, __PyFoam__, and __foamlib__ in reading fields. 
-Note that, the aforementioned packages have more functions compared to this one.
+It is faster than [FluidFoam](https://github.com/fluiddyn/fluidfoam), [PyFoam](https://pypi.org/project/PyFoam/), and [foamlib](https://github.com/gerlero/foamlib) in reading fields.
+However, the aforementioned packages have more functions compared to this one.
 
 ### <span style="color:blue;">OFField</span> class
 The class could read OpenFOAM fields. 
@@ -34,3 +34,11 @@ The function could read ListList, like the cellZones file.
 The data type are: "lable", "scalar", "vector".
 
 For example: `cellZones = readList("constant/polyMesh/cellZones", "label")`.
+
+### Perform <span style="color:blue;">POD</span> to openfoam fields.
+Please check the submodule _PODopenFOAM_ and the class under it _PODmodes_, which can be called `foamToPython.PODmodes`. It can be created as,
+
+`pod = PODmodes(U, POD_algo=<POD_algo>, rank=<rank>)`.
+
+The modes can be export with OpenFOAM style using
+`pod.writeModes(outputDir, fieldName=<fieldName>)`.
