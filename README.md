@@ -9,6 +9,8 @@ It can process volScalarField or volVectorField, either uniform or non-uniform i
 #### read field, e.g., U
 `U = readOFData.OFField('case/1/U', 'vector')`
 
+The package can read parallel case, e.g., `U = readOFData.OFField('case/1/U', 'vector', parallel=True)`.
+
 #### load <span style="color:blue;">internalField</span> and <span style="color:blue;">boundaryField</span>
 
 `U_cell = U.internalField`
