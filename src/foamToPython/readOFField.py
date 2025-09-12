@@ -63,13 +63,23 @@ class OFField:
         self._field_loaded = False
 
         if self.read_data:
-            self._readField()
+            (
+                self._dimensions,
+                self._internalField,
+                self._boundaryField,
+                self.internal_field_type,
+            ) = self._readField()
             self._field_loaded = True
 
     @property
     def dimensions(self):
         if not self._field_loaded:
-            self._readField()
+            (
+                self._dimensions,
+                self._internalField,
+                self._boundaryField,
+                self.internal_field_type,
+            ) = self._readField()
             self._field_loaded = True
         return self._dimensions
 
@@ -80,7 +90,12 @@ class OFField:
     @property
     def internalField(self):
         if not self._field_loaded:
-            self._readField()
+            (
+                self._dimensions,
+                self._internalField,
+                self._boundaryField,
+                self.internal_field_type,
+            ) = self._readField()
             self._field_loaded = True
         return self._internalField
 
@@ -91,7 +106,12 @@ class OFField:
     @property
     def boundaryField(self):
         if not self._field_loaded:
-            self._readField()
+            (
+                self._dimensions,
+                self._internalField,
+                self._boundaryField,
+                self.internal_field_type,
+            ) = self._readField()
             self._field_loaded = True
         return self._boundaryField
 
@@ -105,7 +125,7 @@ class OFField:
         else:
             return self._readField_serial(self.filename)
 
-    def _readField_serial(self, filename: str) -> None:
+    def _readField_serial(self, filename: str):
         """
         Read the field file and parse internal and boundary fields.
         """
@@ -140,7 +160,7 @@ class OFField:
 
         return _dimensions, _internalField, _boundaryField, internal_field_type
 
-    def _readField_parallel(self) -> None:
+    def _readField_parallel(self):
         case_dir = self.caseDir
         processor_dirs = sorted(
             [d for d in os.listdir(case_dir) if d.startswith("processor")],
@@ -175,10 +195,11 @@ class OFField:
             internal_field_types.append(field_type)
 
         self.internal_field_type = internal_field_types[0]
+        self._num_processors = len(_internalField)
 
-        return _dimensions, _internalField, _boundaryField
+        return _dimensions, _internalField, _boundaryField, internal_field_types[0]
 
-    def _process_uniform(self, line: str) -> None:
+    def _process_uniform(self, line: str):
         """
         Process uniform internal field value.
         Args:
