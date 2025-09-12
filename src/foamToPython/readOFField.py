@@ -68,7 +68,7 @@ class OFField:
                 self._internalField,
                 self._boundaryField,
                 self.internal_field_type,
-            ) = self._readField()
+            ) = self.readField()
             self._field_loaded = True
 
     @property
@@ -79,7 +79,7 @@ class OFField:
                 self._internalField,
                 self._boundaryField,
                 self.internal_field_type,
-            ) = self._readField()
+            ) = self.readField()
             self._field_loaded = True
         return self._dimensions
 
@@ -95,7 +95,7 @@ class OFField:
                 self._internalField,
                 self._boundaryField,
                 self.internal_field_type,
-            ) = self._readField()
+            ) = self.readField()
             self._field_loaded = True
         return self._internalField
 
@@ -111,7 +111,7 @@ class OFField:
                 self._internalField,
                 self._boundaryField,
                 self.internal_field_type,
-            ) = self._readField()
+            ) = self.readField()
             self._field_loaded = True
         return self._boundaryField
 
@@ -119,27 +119,28 @@ class OFField:
     def boundaryField(self, value):
         self._boundaryField = value
 
-    def _readField(self) -> None:
+    def readField(self):
         if self.parallel:
             return self._readField_parallel()
         else:
-            return self._readField_serial(self.filename)
+            return self._readField(self.filename, self.data_type)
 
-    def _readField_serial(self, filename: str):
+    @staticmethod
+    def _readField(filename: str, data_type: str, parallel: bool = False):
         """
         Read the field file and parse internal and boundary fields.
         """
         with open(f"{filename}", "rb") as f:
             content = f.readlines()
             data_idx, boundary_start_idx, dim_idx, data_size, internal_field_type = (
-                self._num_field(content)
+                OFField._num_field(content)
             )
 
             _dimensions = _process_dimensions(content[dim_idx].decode("utf-8"))
 
             if internal_field_type == "uniform":
-                _internalField = self._process_uniform(
-                    content[data_idx].decode("utf-8")
+                _internalField = OFField._process_uniform(
+                    content[data_idx].decode("utf-8"), data_type
                 )
             elif internal_field_type == "nonuniform":
                 if data_size is None:
@@ -148,15 +149,19 @@ class OFField:
                     )
                 data_start_idx = data_idx + 2
                 # Extract relevant lines containing coordinates
-                internal_string = content[data_start_idx : data_start_idx + data_size]
-                _internalField = self._process_field(internal_string, data_size)
+                _internalField = OFField._process_field(
+                    content[data_start_idx : data_start_idx + data_size],
+                    data_size,
+                    data_type,
+                )
             else:
                 raise ValueError(
                     "internal_field_type should be 'uniform' or 'nonuniform'"
                 )
 
-            boundary_string = content[boundary_start_idx:]
-            _boundaryField = self._process_boundary(boundary_string, self.data_type)
+            _boundaryField = OFField._process_boundary(
+                content[boundary_start_idx:], data_type, parallel
+            )
 
         return _dimensions, _internalField, _boundaryField, internal_field_type
 
@@ -179,7 +184,10 @@ class OFField:
 
         # Use multiprocessing to read all processor field files in parallel
         with multiprocessing.Pool() as pool:
-            results = pool.map(self._readField_serial, proc_paths)
+            results = pool.starmap(
+                self._readField,
+                [(proc_path, self.data_type, True) for proc_path in proc_paths],
+            )
 
         # Unpack results
         _dimensions = results[0][0]
@@ -199,13 +207,14 @@ class OFField:
 
         return _dimensions, _internalField, _boundaryField, internal_field_types[0]
 
-    def _process_uniform(self, line: str):
+    @staticmethod
+    def _process_uniform(line: str, data_type: str):
         """
         Process uniform internal field value.
         Args:
             line (str): Line containing the uniform value.
         """
-        if self.data_type == "scalar":
+        if data_type == "scalar":
             # Extract the scalar value after 'uniform'
             match = re.search(r"uniform\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?|\d+)", line)
             if match:
@@ -213,7 +222,7 @@ class OFField:
             else:
                 raise ValueError("Invalid uniform scalar format")
 
-        elif self.data_type == "vector":
+        elif data_type == "vector":
             # Extract the vector value after 'uniform', the element may be integer or float
             # for example: uniform (0 0 1.0) or uniform (1 0 0)
             match = re.search(
@@ -228,19 +237,20 @@ class OFField:
 
         return _internalField
 
-    def _process_field(self, string_coords: List[bytes], data_size: int) -> None:
+    @staticmethod
+    def _process_field(string_coords: List[bytes], data_size: int, data_type: str):
         """
         Process nonuniform internal field values.
         Args:
             string_coords (list): List of byte strings containing field values.
         """
-        if self.data_type == "scalar":
+        if data_type == "scalar":
             # Join all lines and replace unwanted characters once
             joined_coords = b" ".join(string_coords).replace(b"\n", b"")
             # Convert to a numpy array in one go
             _internalField = np.fromstring(joined_coords, sep=" ", dtype=float)
 
-        elif self.data_type == "vector":
+        elif data_type == "vector":
             # Join all lines and replace unwanted characters once
             joined_coords = (
                 b" ".join(string_coords)
@@ -258,7 +268,10 @@ class OFField:
 
         return _internalField
 
-    def _process_boundary(self, lines: List[Union[str, bytes]], data_type: str) -> None:
+    @staticmethod
+    def _process_boundary(
+        lines: List[Union[str, bytes]], data_type: str, parallel: bool
+    ):
         """
         Process boundaryField section and extract patch properties.
         Args:
@@ -371,7 +384,7 @@ class OFField:
                                     props[key] = np.array(
                                         [float(x) for x in scalar_match]
                                     )
-                                elif self.parallel:
+                                elif parallel:
                                     props[key] = value_str
                                 else:
                                     raise ValueError(
@@ -387,7 +400,7 @@ class OFField:
                                     props[key] = np.array(
                                         [[float(x) for x in v.split()] for v in vecs]
                                     )
-                                elif self.parallel:
+                                elif parallel:
                                     props[key] = value_str
                                 else:
                                     raise ValueError(
@@ -414,8 +427,9 @@ class OFField:
 
         return bc_dict
 
+    @staticmethod
     def _num_field(
-        self, subcontent: List[bytes]
+        subcontent: List[bytes],
     ) -> Tuple[Optional[int], Optional[int], Optional[int]]:
         """
         Find indices for dimensions, internalField, and boundaryField sections.

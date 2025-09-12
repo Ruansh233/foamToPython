@@ -68,4 +68,10 @@ The arguments are:
 The modes can be exported with OpenFOAM format using
 `pod.writeModes(outputDir, fieldName=<fieldName>)`.
 
-The support for parallel case will be added in the future.
+The arguments are:
+1. _outputDir_: the directory to write the modes. The modes will be written in folders `outputDir/1`, `outputDir/2`, ..., `outputDir/rank`.
+2. _fieldName_: the name of the field to write. Default is `None`.
+
+### Parallel case
+The package can read and write parallel case. 
+However, the speed is slower than the serial case, and it will be improved in the future.
