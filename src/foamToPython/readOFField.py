@@ -54,8 +54,8 @@ class OFField:
         self.parallel = parallel
 
         self.data_type = data_type
-        self.internal_field_type = None
         self.read_data = read_data
+        self.internal_field_type = None
 
         self._dimensions = np.array([])
         self._internalField = np.array([])
@@ -63,35 +63,13 @@ class OFField:
         self._field_loaded = False
 
         if self.read_data:
-            if self.parallel:
-                (
-                    self._dimensions,
-                    self._internalField,
-                    self._boundaryField
-                ) = self._read_parallel_field()
-            else:
-                (
-                    self._dimensions,
-                    self._internalField,
-                    self._boundaryField,
-                ) = self._readField(self.filename)
+            self._readField()
             self._field_loaded = True
 
     @property
     def dimensions(self):
         if not self._field_loaded:
-            if self.parallel:
-                (
-                    self._dimensions,
-                    self._internalField,
-                    self._boundaryField,
-                ) = self._read_parallel_field()
-            else:
-                (
-                    self._dimensions,
-                    self._internalField,
-                    self._boundaryField,
-                ) = self._readField(self.filename)
+            self._readField()
             self._field_loaded = True
         return self._dimensions
 
@@ -102,18 +80,7 @@ class OFField:
     @property
     def internalField(self):
         if not self._field_loaded:
-            if self.parallel:
-                (
-                    self._dimensions, 
-                    self._internalField, 
-                    self._boundaryField
-                ) = self._read_parallel_field()
-            else:
-                (
-                    self._dimensions, 
-                    self._internalField, 
-                    self._boundaryField
-                 ) = self._readField(self.filename)
+            self._readField()
             self._field_loaded = True
         return self._internalField
 
@@ -124,18 +91,7 @@ class OFField:
     @property
     def boundaryField(self):
         if not self._field_loaded:
-            if self.parallel:
-                (
-                    self._dimensions, 
-                    self._internalField, 
-                    self._boundaryField
-                ) = self._read_parallel_field()
-            else:
-                (
-                    self._dimensions, 
-                    self._internalField, 
-                    self._boundaryField
-                 ) = self._readField()
+            self._readField()
             self._field_loaded = True
         return self._boundaryField
 
@@ -143,40 +99,52 @@ class OFField:
     def boundaryField(self, value):
         self._boundaryField = value
 
-    def _readField(self, filename: str) -> None:
+    def _readField(self) -> None:
+        if self.parallel:
+            return self._readField_parallel()
+        else:
+            return self._readField_serial(self.filename)
+
+    def _readField_serial(self, filename: str) -> None:
         """
         Read the field file and parse internal and boundary fields.
         """
         with open(f"{filename}", "rb") as f:
             content = f.readlines()
-            data_idx, boundary_start_idx, dim_idx, data_size = self._num_field(content)
+            data_idx, boundary_start_idx, dim_idx, data_size, internal_field_type = (
+                self._num_field(content)
+            )
 
             _dimensions = _process_dimensions(content[dim_idx].decode("utf-8"))
 
-            if self.internal_field_type == "uniform":
+            if internal_field_type == "uniform":
                 _internalField = self._process_uniform(
                     content[data_idx].decode("utf-8")
                 )
-            elif self.internal_field_type == "nonuniform":
+            elif internal_field_type == "nonuniform":
                 if data_size is None:
-                    raise ValueError(f"{filename}: Data size for nonuniform internalField not found.")
+                    raise ValueError(
+                        f"{filename}: Data size for nonuniform internalField not found."
+                    )
                 data_start_idx = data_idx + 2
                 # Extract relevant lines containing coordinates
-                internal_string = content[
-                    data_start_idx : data_start_idx + data_size
-                ]
+                internal_string = content[data_start_idx : data_start_idx + data_size]
                 _internalField = self._process_field(internal_string, data_size)
+            else:
+                raise ValueError(
+                    "internal_field_type should be 'uniform' or 'nonuniform'"
+                )
 
             boundary_string = content[boundary_start_idx:]
             _boundaryField = self._process_boundary(boundary_string, self.data_type)
 
-        return _dimensions, _internalField, _boundaryField
+        return _dimensions, _internalField, _boundaryField, internal_field_type
 
-    def _read_parallel_field(self) -> None:
+    def _readField_parallel(self) -> None:
         case_dir = self.caseDir
         processor_dirs = sorted(
             [d for d in os.listdir(case_dir) if d.startswith("processor")],
-            key=lambda x: int(x.replace("processor", ""))
+            key=lambda x: int(x.replace("processor", "")),
         )
         if not processor_dirs:
             raise FileNotFoundError("No processor directories found.")
@@ -191,20 +159,22 @@ class OFField:
 
         # Use multiprocessing to read all processor field files in parallel
         with multiprocessing.Pool() as pool:
-            results = pool.map(
-                self._readField,
-                proc_paths
-            )
+            results = pool.map(self._readField_serial, proc_paths)
 
         # Unpack results
         _dimensions = results[0][0]
         _internalField = []
         _boundaryField = []
-        for dim, internal, boundary in results:
+        internal_field_types = []
+
+        for dim, internal, boundary, field_type in results:
             if not np.array_equal(dim, _dimensions):
                 raise ValueError("Inconsistent field dimensions across processors.")
             _internalField.append(internal)
             _boundaryField.append(boundary)
+            internal_field_types.append(field_type)
+
+        self.internal_field_type = internal_field_types[0]
 
         return _dimensions, _internalField, _boundaryField
 
@@ -438,60 +408,88 @@ class OFField:
         data_idx = None
         boundary_idx = None
         idx = 0
-        self.internal_field_type = None
+        internal_field_type = None
 
         while idx < len(subcontent):
             if b"dimensions" in subcontent[idx]:
                 dim_idx = idx
             if b"internalField" in subcontent[idx]:
                 if b"nonuniform" in subcontent[idx]:
-                    self.internal_field_type = "nonuniform"
-                    idx += 1
+                    internal_field_type = "nonuniform"
                 else:
-                    self.internal_field_type = "uniform"
+                    internal_field_type = "uniform"
                     data_idx = idx
-                    idx += 1
-            if data_size is None and self.internal_field_type == "nonuniform":
+            if data_size is None and internal_field_type == "nonuniform":
                 try:
                     data_size = int(subcontent[idx])
                     data_idx = idx
                     idx = data_idx + data_size + 1
                 except ValueError:
-                    idx += 1
+                    pass
             if b"boundaryField" in subcontent[idx]:
                 boundary_idx = idx
                 break
             idx += 1
 
-        if self.internal_field_type is None:
+        if internal_field_type is None:
             raise ValueError("internalField not found in the file.")
-        return data_idx, boundary_idx, dim_idx, data_size
+        return data_idx, boundary_idx, dim_idx, data_size, internal_field_type
 
     def writeField(
         self,
-        fieldPath: str,
+        fieldDir: str,
         timeDir: Optional[str] = None,
         fieldName: Optional[str] = None,
     ) -> None:
         """
         Write field data to a file in OpenFOAM format.
         Args:
-            fieldPath (str): Path to output file.
+            fieldDir (str): Path to output file.
             timeDir (str, optional): Time directory name.
             fieldName (str, optional): Field name.
         """
-        _timeDir = timeDir if timeDir is not None else fieldPath.split("/")[-2]
-        _fieldName = fieldName if fieldName is not None else fieldPath.split("/")[-1]
+        if self.parallel:
+            self._writeField_parallel(fieldDir, timeDir=timeDir, fieldName=fieldName)
+        else:
+            self._writeField_serial(
+                fieldDir,
+                internalField=self.internalField,
+                boundaryField=self.boundaryField,
+                timeDir=timeDir,
+                fieldName=fieldName,
+            )
+
+    def _writeField_serial(
+        self,
+        fieldDir: str,
+        internalField: Union[float, np.ndarray],
+        boundaryField: Dict[str, Dict[str, Any]],
+        timeDir: Optional[str] = None,
+        fieldName: Optional[str] = None,
+    ) -> None:
+        """
+        Write field data to a file in OpenFOAM format.
+        Args:
+            fieldDir (str): Path to output file.
+            timeDir (str, optional): Time directory name.
+            fieldName (str, optional): Field name.
+        """
+        _timeDir = timeDir if timeDir is not None else fieldDir.split("/")[-2]
+        _fieldName = fieldName if fieldName is not None else fieldDir.split("/")[-1]
+
+        _fieldDir = (
+            "/".join(fieldDir.split("/")[:-2]) + f"/{_timeDir}" + f"/{_fieldName}"
+        )
 
         try:
             int(_timeDir)
         except ValueError:
             sys.exit(
-                "The fieldPath should be like '.../0/U' or '.../100/p'. "
+                "The fieldDir should be like '.../0/U' or '.../100/p'. "
                 "You can provide <timeDir> and <fieldName> to use other formats."
             )
 
-        with open(fieldPath, "w") as f:
+        with open(_fieldDir, "w") as f:
             # write header
             thisHeader = header.replace(
                 "className;", f"vol{self.data_type.capitalize()}Field;"
@@ -510,31 +508,39 @@ class OFField:
             # write internalField for scalar or vector
             if self.data_type == "scalar":
                 if self.internal_field_type == "uniform":
-                    f.write(f"internalField   uniform {self._internalField:.8g};\n\n")
+                    f.write(f"internalField   uniform {internalField:.8g};\n\n")
                 elif self.internal_field_type == "nonuniform":
                     f.write(f"internalField   nonuniform List<scalar>\n")
-                    f.write(f"{self._internalField.shape[0]}\n")
+                    f.write(f"{internalField.shape[0]}\n")
                     f.write("(\n")
-                    for point in self._internalField:
+                    for point in internalField:
                         f.write(f"{point:.8g}\n")
                     f.write(")\n;\n")
+                else:
+                    raise ValueError(
+                        "internal_field_type should be 'uniform' or 'nonuniform'"
+                    )
             elif self.data_type == "vector":
                 if self.internal_field_type == "uniform":
                     f.write(
-                        f"internalField   uniform ({self._internalField[0]:.8g} {self._internalField[1]:.8g} {self._internalField[2]:.8g});\n\n"
+                        f"internalField   uniform ({internalField[0]:.8g} {internalField[1]:.8g} {internalField[2]:.8g});\n\n"
                     )
                 elif self.internal_field_type == "nonuniform":
                     f.write(f"internalField   nonuniform List<vector>\n")
-                    f.write(f"{self._internalField.shape[0]}\n")
+                    f.write(f"{internalField.shape[0]}\n")
                     f.write("(\n")
-                    for point in self._internalField:
+                    for point in internalField:
                         f.write(f"({point[0]:.8g} {point[1]:.8g} {point[2]:.8g})\n")
                     f.write(")\n;\n")
+                else:
+                    raise ValueError(
+                        "internal_field_type should be 'uniform' or 'nonuniform'"
+                    )
 
             # write boundaryField
             f.write("boundaryField\n")
             f.write("{\n")
-            for patch, props in self._boundaryField.items():
+            for patch, props in boundaryField.items():
                 f.write(f"    {patch}\n")
                 f.write("    {\n")
                 for key, value in props.items():
@@ -571,6 +577,72 @@ class OFField:
 
             # write ender
             f.write(ender)
+
+    def _writeField_parallel(
+        self,
+        fieldDir: str,
+        timeDir: Optional[str] = None,
+        fieldName: Optional[str] = None,
+    ) -> None:
+        """
+        Write field data to processor directories in OpenFOAM format.
+        Args:
+            fieldDir (str): Path to the field directory (e.g., '.../case/1/U').
+            timeDir (str, optional): Time directory name.
+            fieldName (str, optional): Field name.
+        """
+        _timeDir = timeDir if timeDir is not None else fieldDir.split("/")[-2]
+        _fieldName = fieldName if fieldName is not None else fieldDir.split("/")[-1]
+
+        _fieldDir = (
+            "/".join(fieldDir.split("/")[:-2])
+            + "/processor"
+            + f"/{_timeDir}"
+            + f"/{_fieldName}"
+        )
+
+        try:
+            int(_timeDir)
+        except ValueError:
+            sys.exit(
+                "The fieldDir should be like '.../0/U' or '.../100/p'. "
+                "You can provide <timeDir> and <fieldName> to use other formats."
+            )
+
+        if not isinstance(self._internalField, list) or not isinstance(
+            self._boundaryField, list
+        ):
+            raise ValueError(
+                "For parallel writing, internalField and boundaryField should be lists."
+            )
+
+        num_processors = len(self._internalField)
+
+        proc_field_path = [
+            _fieldDir.replace("processor", f"processor{idx}")
+            for idx in range(num_processors)
+        ]
+
+        with multiprocessing.Pool() as pool:
+            list(
+                pool.imap(
+                    self._writeField_wrapper,
+                    [
+                        (
+                            proc_path,
+                            self._internalField[idx],
+                            self._boundaryField[idx],
+                            _timeDir,
+                            _fieldName,
+                        )
+                        for idx, proc_path in enumerate(proc_field_path)
+                    ],
+                )
+            )
+
+    def _writeField_wrapper(self, args):
+        # args: (fieldDir, internalField, boundaryField, timeDir, fieldName)
+        return self._writeField_serial(*args)
 
 
 def _parse_vector_string(s: str) -> np.ndarray:
