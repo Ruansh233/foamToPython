@@ -5,12 +5,49 @@ import re
 import multiprocessing
 from typing import List, Dict, Any, Optional, Tuple, Union
 from .headerEnd import *
-from .readOFList import _check_data_type
 
 
 class OFField:
     """
-    Class to read and write OpenFOAM field files (scalar/vector).
+    A class for reading and writing OpenFOAM field files supporting both scalar and vector fields.
+    
+    This class provides functionality to read OpenFOAM field files in both serial and parallel 
+    formats, parse internal and boundary field data, and write field data back to OpenFOAM format.
+    
+    Attributes
+    ----------
+    filename : str
+        Path to the OpenFOAM field file.
+    fieldName : str
+        Name of the field.
+    timeName : str
+        Time directory name.
+    data_type : str, optional
+        Type of field ('scalar' or 'vector').
+    read_data : bool
+        Whether to read field data upon initialization.
+    parallel : bool
+        Whether the field uses parallel processing.
+    internal_field_type : str, optional
+        Type of internal field ('uniform', 'nonuniform', or 'nonuniformZero').
+    dimensions : np.ndarray
+        Physical dimensions of the field [kg m s K mol A cd].
+    internalField : Union[float, np.ndarray]
+        Internal field data.
+    boundaryField : Dict[str, Dict[str, Any]]
+        Boundary field data organized by patch names.
+        
+    Examples
+    --------
+    Reading a scalar field file:
+    
+    >>> field = OFField('case/0/p', data_type='scalar', read_data=True)
+    >>> pressure_values = field.internalField
+    
+    Reading a vector field file:
+    
+    >>> velocity = OFField('case/0/U', data_type='vector', read_data=True)
+    >>> u_components = velocity.internalField  # Shape: (n_cells, 3)
     """
 
     filename: str
@@ -35,11 +72,23 @@ class OFField:
     ) -> None:
         """
         Initialize OFField object.
-        Args:
-            filename (str): Path to the OpenFOAM field file.
-            data_type (str): Type of field ('scalar' or 'vector').
-            read (bool): If True, read the field file upon initialization.
-            parallel (bool): If True, enable parallel processing (not implemented).
+        
+        Parameters
+        ----------
+        filename : str, optional
+            Path to the OpenFOAM field file, by default None.
+        data_type : str, optional
+            Type of field ('scalar' or 'vector'), by default None.
+        read_data : bool, optional
+            If True, read the field file upon initialization, by default False.
+        parallel : bool, optional
+            If True, enable parallel processing for multi-processor cases, by default False.
+            
+        Notes
+        -----
+        If filename is provided, the object will automatically extract caseDir, fieldName, 
+        and timeName from the path. If read_data is True, the field data will be loaded 
+        immediately upon initialization.
         """
         if filename is not None:
             self.filename = filename
@@ -70,6 +119,46 @@ class OFField:
                 self.internal_field_type,
             ) = self.readField()
             self._field_loaded = True
+
+    # a initial constructor copy from another OFField object
+    @classmethod
+    def from_OFField(cls, other: "OFField") -> "OFField":
+        """
+        Create a new OFField instance by copying another OFField object.
+        
+        Parameters
+        ----------
+        other : OFField
+            The source OFField object to copy from.
+            
+        Returns
+        -------
+        OFField
+            A new OFField instance with copied attributes from the source object.
+            
+        Notes
+        -----
+        This method performs a deep copy of arrays and dictionaries to ensure
+        the new instance is independent of the original object.
+        """
+        obj = cls()
+        obj.filename = other.filename
+        obj.caseDir = other.caseDir
+        obj.fieldName = other.fieldName
+        obj.timeName = other.timeName
+        obj.data_type = other.data_type
+        obj.read_data = other.read_data
+        obj.parallel = other.parallel
+        obj.internal_field_type = other.internal_field_type
+        obj._dimensions = other._dimensions.copy()
+        obj._internalField = (
+            other._internalField.copy()
+            if isinstance(other._internalField, np.ndarray)
+            else other._internalField
+        )
+        obj._boundaryField = {k: v.copy() for k, v in other._boundaryField.items()}
+        obj._field_loaded = other._field_loaded
+        return obj
 
     @property
     def dimensions(self):
@@ -129,6 +218,35 @@ class OFField:
     def _readField(filename: str, data_type: str, parallel: bool = False):
         """
         Read the field file and parse internal and boundary fields.
+        
+        Parameters
+        ----------
+        filename : str
+            Path to the OpenFOAM field file.
+        data_type : str
+            Type of field ('scalar' or 'vector').
+        parallel : bool, optional
+            If True, indicates parallel processing context, by default False.
+            
+        Returns
+        -------
+        tuple
+            A tuple containing:
+            - _dimensions : np.ndarray
+                Physical dimensions of the field.
+            - _internalField : Union[float, np.ndarray]
+                Internal field data.
+            - _boundaryField : Dict[str, Dict[str, Any]]
+                Boundary field data organized by patch names.
+            - internal_field_type : str
+                Type of internal field ('uniform', 'nonuniform', or 'nonuniformZero').
+                
+        Raises
+        ------
+        ValueError
+            If internal field type is invalid or file format is incorrect.
+        SystemExit
+            If unknown data_type is encountered.
         """
         with open(f"{filename}", "rb") as f:
             content = f.readlines()
@@ -143,10 +261,6 @@ class OFField:
                     content[data_idx].decode("utf-8"), data_type
                 )
             elif internal_field_type == "nonuniform":
-                if data_size is None:
-                    raise ValueError(
-                        f"{filename}: Data size for nonuniform internalField not found."
-                    )
                 data_start_idx = data_idx + 2
                 # Extract relevant lines containing coordinates
                 _internalField = OFField._process_field(
@@ -154,6 +268,13 @@ class OFField:
                     data_size,
                     data_type,
                 )
+            elif internal_field_type == "nonuniformZero":
+                if data_type == "scalar":
+                    _internalField = np.array([])
+                elif data_type == "vector":
+                    _internalField = np.empty((0, 3))
+                else:
+                    sys.exit("Unknown data_type. please use 'scalar' or 'vector'.")
             else:
                 raise ValueError(
                     "internal_field_type should be 'uniform' or 'nonuniform'"
@@ -211,8 +332,24 @@ class OFField:
     def _process_uniform(line: str, data_type: str):
         """
         Process uniform internal field value.
-        Args:
-            line (str): Line containing the uniform value.
+        
+        Parameters
+        ----------
+        line : str
+            Line containing the uniform value.
+        data_type : str
+            Type of field ('scalar' or 'vector').
+            
+        Returns
+        -------
+        Union[float, np.ndarray]
+            For scalar fields: float value.
+            For vector fields: numpy array with shape (3,).
+            
+        Raises
+        ------
+        ValueError
+            If uniform field format is invalid for the specified data_type.
         """
         if data_type == "scalar":
             # Extract the scalar value after 'uniform'
@@ -241,8 +378,26 @@ class OFField:
     def _process_field(string_coords: List[bytes], data_size: int, data_type: str):
         """
         Process nonuniform internal field values.
-        Args:
-            string_coords (list): List of byte strings containing field values.
+        
+        Parameters
+        ----------
+        string_coords : List[bytes]
+            List of byte strings containing field values.
+        data_size : int
+            Number of data points expected.
+        data_type : str
+            Type of field ('scalar' or 'vector').
+            
+        Returns
+        -------
+        np.ndarray
+            For scalar fields: 1D array with shape (data_size,).
+            For vector fields: 2D array with shape (data_size, 3).
+            
+        Raises
+        ------
+        SystemExit
+            If unknown data_type is encountered.
         """
         if data_type == "scalar":
             # Join all lines and replace unwanted characters once
@@ -274,9 +429,26 @@ class OFField:
     ):
         """
         Process boundaryField section and extract patch properties.
-        Args:
-            lines (list): List of lines (bytes or str) for boundaryField.
-            data_type (str): Type of field ('scalar' or 'vector').
+        
+        Parameters
+        ----------
+        lines : List[Union[str, bytes]]
+            List of lines (bytes or str) for boundaryField section.
+        data_type : str
+            Type of field ('scalar' or 'vector').
+        parallel : bool
+            If True, indicates parallel processing context.
+            
+        Returns
+        -------
+        Dict[str, Dict[str, Any]]
+            Dictionary containing boundary field properties organized by patch names.
+            Each patch contains properties like 'type', 'value', etc.
+            
+        Raises
+        ------
+        ValueError
+            If file format is incorrect or boundary field parsing fails.
         """
         # decode bytes to string if necessary
         if isinstance(lines[0], bytes):
@@ -433,10 +605,31 @@ class OFField:
     ) -> Tuple[Optional[int], Optional[int], Optional[int]]:
         """
         Find indices for dimensions, internalField, and boundaryField sections.
-        Args:
-            subcontent (list): List of file lines (bytes).
-        Returns:
-            tuple: (data_idx, boundary_idx, dim_idx)
+        
+        Parameters
+        ----------
+        subcontent : List[bytes]
+            List of file lines as bytes.
+            
+        Returns
+        -------
+        Tuple[Optional[int], Optional[int], Optional[int], Optional[int], Optional[str]]
+            A tuple containing:
+            - data_idx : int or None
+                Index of the internalField data.
+            - boundary_idx : int or None
+                Index where boundaryField section starts.
+            - dim_idx : int or None
+                Index of the dimensions line.
+            - data_size : int or None
+                Number of data points in nonuniform fields.
+            - internal_field_type : str or None
+                Type of internal field ('uniform', 'nonuniform', or 'nonuniformZero').
+                
+        Raises
+        ------
+        ValueError
+            If internalField is not found in the file.
         """
         dim_idx = None
         data_size = None
@@ -450,7 +643,11 @@ class OFField:
                 dim_idx = idx
             if b"internalField" in subcontent[idx]:
                 if b"nonuniform" in subcontent[idx]:
-                    internal_field_type = "nonuniform"
+                    if b"0()" in subcontent[idx]:
+                        data_idx = idx
+                        internal_field_type = "nonuniformZero"
+                    else:
+                        internal_field_type = "nonuniform"
                 else:
                     internal_field_type = "uniform"
                     data_idx = idx
@@ -478,10 +675,24 @@ class OFField:
     ) -> None:
         """
         Write field data to a file in OpenFOAM format.
-        Args:
-            fieldDir (str): Path to output file.
-            timeDir (str, optional): Time directory name.
-            fieldName (str, optional): Field name.
+        
+        Parameters
+        ----------
+        fieldDir : str
+            Path to output file or directory.
+        timeDir : str, optional
+            Time directory name, by default None. If None, extracted from fieldDir.
+        fieldName : str, optional
+            Field name, by default None. If None, extracted from fieldDir.
+            
+        Returns
+        -------
+        None
+        
+        Notes
+        -----
+        Automatically handles both serial and parallel field writing based on the
+        parallel attribute of the object.
         """
         if self.parallel:
             self._writeField_parallel(fieldDir, timeDir=timeDir, fieldName=fieldName)
@@ -503,11 +714,31 @@ class OFField:
         fieldName: Optional[str] = None,
     ) -> None:
         """
-        Write field data to a file in OpenFOAM format.
-        Args:
-            fieldDir (str): Path to output file.
-            timeDir (str, optional): Time directory name.
-            fieldName (str, optional): Field name.
+        Write field data to a file in OpenFOAM format (serial version).
+        
+        Parameters
+        ----------
+        fieldDir : str
+            Path to output file.
+        internalField : Union[float, np.ndarray]
+            Internal field data to write.
+        boundaryField : Dict[str, Dict[str, Any]]
+            Boundary field data organized by patch names.
+        timeDir : str, optional
+            Time directory name, by default None.
+        fieldName : str, optional
+            Field name, by default None.
+            
+        Returns
+        -------
+        None
+        
+        Raises
+        ------
+        ValueError
+            If internal_field_type is invalid.
+        SystemExit
+            If fieldDir format is incorrect.
         """
         _timeDir = timeDir if timeDir is not None else fieldDir.split("/")[-2]
         _fieldName = fieldName if fieldName is not None else fieldDir.split("/")[-1]
@@ -621,10 +852,26 @@ class OFField:
     ) -> None:
         """
         Write field data to processor directories in OpenFOAM format.
-        Args:
-            fieldDir (str): Path to the field directory (e.g., '.../case/1/U').
-            timeDir (str, optional): Time directory name.
-            fieldName (str, optional): Field name.
+        
+        Parameters
+        ----------
+        fieldDir : str
+            Path to the field directory (e.g., '.../case/1/U').
+        timeDir : str, optional
+            Time directory name, by default None.
+        fieldName : str, optional
+            Field name, by default None.
+            
+        Returns
+        -------
+        None
+        
+        Raises
+        ------
+        ValueError
+            If internalField and boundaryField are not lists for parallel writing.
+        SystemExit
+            If fieldDir format is incorrect.
         """
         _timeDir = timeDir if timeDir is not None else fieldDir.split("/")[-2]
         _fieldName = fieldName if fieldName is not None else fieldDir.split("/")[-1]
@@ -683,10 +930,23 @@ class OFField:
 def _parse_vector_string(s: str) -> np.ndarray:
     """
     Parse a single vector string like '(0 0 1.0)' into a NumPy array.
-    Args:
-        s (str): Vector string.
-    Returns:
-        np.ndarray: Parsed vector.
+    
+    Parameters
+    ----------
+    s : str
+        Vector string with format '(x y z)' or 'x y z'.
+        
+    Returns
+    -------
+    np.ndarray
+        1D array with shape (3,) containing the parsed vector components.
+        
+    Examples
+    --------
+    >>> _parse_vector_string("0 0 1.0")
+    array([0., 0., 1.])
+    >>> _parse_vector_string("(1.5 -2.0 3.14)")
+    array([ 1.5, -2.0,  3.14])
     """
     s = s.strip("()")
     return np.array([float(x) for x in s.split()])
@@ -695,10 +955,27 @@ def _parse_vector_string(s: str) -> np.ndarray:
 def _process_dimensions(line: str) -> np.ndarray:
     """
     Parse dimensions line from OpenFOAM file.
-    Args:
-        line (str): Line containing dimensions.
-    Returns:
-        np.ndarray: Array of dimensions.
+    
+    Parameters
+    ----------
+    line : str
+        Line containing dimensions in format '[kg m s K mol A cd]'.
+        
+    Returns
+    -------
+    np.ndarray
+        Array of 7 integers representing physical dimensions in SI base units:
+        [mass, length, time, temperature, amount, current, luminous_intensity].
+        
+    Raises
+    ------
+    ValueError
+        If dimensions format is invalid or cannot be parsed.
+        
+    Examples
+    --------
+    >>> _process_dimensions("dimensions      [0 1 -1 0 0 0 0];")
+    array([ 0,  1, -1,  0,  0,  0,  0])
     """
     match = re.search(
         r"\[\s*-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s*\]\s*", line
@@ -713,10 +990,30 @@ def _process_dimensions(line: str) -> np.ndarray:
 def find_patches(text: List[str]) -> Any:
     """
     Generator that yields complete patch blocks from OpenFOAM boundaryField file.
-    Args:
-        text (list): Lines of the boundaryField file.
-    Yields:
-        str: Full text content of a single patch block.
+    
+    Parameters
+    ----------
+    text : List[str]
+        Lines of the boundaryField file as strings.
+        
+    Yields
+    ------
+    List[str]
+        Full text content of a single patch block as list of lines.
+        Each yielded item contains all lines belonging to one patch definition.
+        
+    Notes
+    -----
+    This function parses the hierarchical structure of OpenFOAM boundaryField
+    files, correctly handling nested braces and extracting complete patch
+    definitions including all properties and values.
+    
+    Examples
+    --------
+    >>> with open('0/U') as f:
+    ...     lines = f.readlines()
+    >>> for patch_lines in find_patches(lines):
+    ...     print(f"Patch: {patch_lines[0]}")  # First line is patch name
     """
     in_boundary = False
     start_boundary = False

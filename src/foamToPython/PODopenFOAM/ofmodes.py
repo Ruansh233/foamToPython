@@ -22,10 +22,23 @@ class PODmodes:
         run: bool = True,
     ) -> None:
         """
-        Args:
-            fieldList (list): List of OpenFOAM field objects.
-            POD_algo (str): Algorithm for POD ('eigen' or 'svd').
-            rank (int): Number of modes to compute.
+        Initialize the PODmodes object for computing POD modes from OpenFOAM field data.
+
+        Parameters
+        ----------
+        fieldList : list
+            List of OpenFOAM field objects.
+        POD_algo : str, optional
+            Algorithm for POD ('eigen' or 'svd'), by default 'eigen'.
+        rank : int, optional
+            Number of modes to compute, by default 10.
+        run : bool, optional
+            Whether to immediately compute the modes, by default True.
+
+        Raises
+        ------
+        ValueError
+            If rank is greater than the number of fields.
         """
         self.fieldList: list = fieldList
         self.POD_algo: str = POD_algo
@@ -70,11 +83,16 @@ class PODmodes:
 
     def getModes(self) -> None:
         """
-        Get the POD modes. Should be called after `performPOD`.
-        Returns:
-            np.ndarray: The POD modes.
-        Raises:
-            ValueError: If POD has not been performed yet.
+        Compute and store the POD modes from the field list.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If POD has not been performed yet or if fieldList is empty.
         """
         if not hasattr(self, "data_matrix"):
             if self.fieldList[0].parallel:
@@ -155,10 +173,24 @@ class PODmodes:
     @staticmethod
     def _field2ndarray_serial(fieldList: list) -> np.ndarray:
         """
-        Convert a list of OpenFOAM field files to a 2D NumPy array.
-        Each column in the array corresponds to a flattened field from a file.
-        Returns:
-            np.ndarray: A 2D array where each column is a flattened field.
+        Convert a list of OpenFOAM field files to a 2D NumPy array (serial version).
+
+        Parameters
+        ----------
+        fieldList : list
+            List of OpenFOAM field objects.
+
+        Returns
+        -------
+        np.ndarray
+            A 2D array where each row is a flattened field.
+
+        Raises
+        ------
+        ValueError
+            If fieldList is empty or field data is invalid.
+        SystemExit
+            If uniform fields are encountered or unknown data_type is used.
         """
         if fieldList[0].internal_field_type == "uniform":
             sys.exit("Uniform field is not supported yet.")
@@ -195,10 +227,24 @@ class PODmodes:
     @staticmethod
     def _field2ndarray_parallel(fieldList: list) -> np.ndarray:
         """
-        Convert a list of OpenFOAM field files to a 2D NumPy array.
-        Each column in the array corresponds to a flattened field from a file.
-        Returns:
-            np.ndarray: A 2D array where each column is a flattened field.
+        Convert a list of OpenFOAM field files to a 2D NumPy array (parallel version).
+
+        Parameters
+        ----------
+        fieldList : list
+            List of OpenFOAM field objects.
+
+        Returns
+        -------
+        np.ndarray
+            A 2D array where each row is a flattened field.
+
+        Raises
+        ------
+        ValueError
+            If fieldList is empty or field data is invalid.
+        SystemExit
+            If uniform fields are encountered or unknown data_type is used.
         """
         if fieldList[0].internal_field_type == "uniform":
             sys.exit("Uniform field is not supported yet.")
@@ -240,14 +286,25 @@ class PODmodes:
     ) -> dict:
         """
         Compute boundary modes for each patch.
-        Args:
-            boundaryFields (list): List of boundary field dictionaries.
-            coeffs (np.ndarray): The coefficients of the POD modes.
-            data_type (str): The data type ('scalar' or 'vector').
-        Returns:
-            dict: A dictionary with patch names as keys and boundary mode values as values.
-        Raises:
-            ValueError: If boundary field type is unknown.
+
+        Parameters
+        ----------
+        boundaryFields : list
+            List of boundary field dictionaries.
+        coeffs : np.ndarray
+            The coefficients of the POD modes.
+        data_type : str
+            The data type ('scalar' or 'vector').
+
+        Returns
+        -------
+        dict
+            Dictionary with patch names as keys and boundary mode values as values.
+
+        Raises
+        ------
+        ValueError
+            If boundary field value type is unknown.
         """
         boundaryValues: dict = {}
         for patch in boundaryFields[0].keys():
@@ -255,11 +312,12 @@ class PODmodes:
                 boundaryFields[0][patch]["type"] == "fixedValue"
                 or boundaryFields[0][patch]["type"] == "fixedGradient"
                 or boundaryFields[0][patch]["type"] == "processor"
+                or boundaryFields[0][patch]["type"] == "calculated"
             ):
                 value_type = list(boundaryFields[0][patch].keys())[-1]
-                if type(boundaryFields[0][patch][value_type]) is str:
+                if isinstance(boundaryFields[0][patch][value_type], str):
                     continue
-                elif type(boundaryFields[0][patch][value_type]) is np.ndarray:
+                elif isinstance(boundaryFields[0][patch][value_type], np.ndarray):
                     value_shape = boundaryFields[0][patch][value_type].ndim
                 else:
                     raise ValueError(
@@ -301,19 +359,40 @@ class PODmodes:
 
     @staticmethod
     def _createModes(
-        bField, cellModes, boundaryValues, data_type, dimensions, parallel
+        bField: dict,
+        cellModes: np.ndarray,
+        boundaryValues: dict,
+        data_type: str,
+        dimensions: list,
+        parallel: bool,
     ) -> list:
         """
         Assemble the POD modes into OpenFOAM field objects with cellModes and boundaryValues.
-        Args:
-            bField (dict): The boundary field dictionary.
-            cellModes (np.ndarray): The cell modes array.
-            boundaryValues (dict): The boundary values dictionary.
-            data_type (str): The data type ('scalar' or 'vector').
-            dimensions (list): The physical dimensions of the field.
-            parallel (bool): Whether the field is parallel or not.
-        Returns:
-            list: A list of OpenFOAM field objects representing the POD modes.
+
+        Parameters
+        ----------
+        bField : dict
+            The boundary field dictionary.
+        cellModes : np.ndarray
+            The cell modes array.
+        boundaryValues : dict
+            The boundary values dictionary.
+        data_type : str
+            The data type ('scalar' or 'vector').
+        dimensions : list
+            The physical dimensions of the field.
+        parallel : bool
+            Whether the field is parallel or not.
+
+        Returns
+        -------
+        list
+            List of OpenFOAM field objects representing the POD modes.
+
+        Raises
+        ------
+        ValueError
+            If boundary field value type is unknown.
         """
         _modes = []
         internal_field_type = "nonuniform"
@@ -338,14 +417,15 @@ class PODmodes:
                     bField[patch]["type"] == "fixedValue"
                     or bField[patch]["type"] == "fixedGradient"
                     or bField[patch]["type"] == "processor"
+                    or bField[patch]["type"] == "calculated"
                 ):
                     mode.boundaryField[patch]["type"] = bField[patch]["type"]
                     value_type = list(bField[patch].keys())[-1]
-                    if type(bField[patch][value_type]) is str:
+                    if isinstance(bField[patch][value_type], str):
                         mode.boundaryField[patch][value_type] = bField[patch][
                             value_type
                         ]
-                    elif type(bField[patch][value_type]) is np.ndarray:
+                    elif isinstance(bField[patch][value_type], np.ndarray):
                         value_shape = bField[patch][value_type].ndim
                         if value_shape == 1:
                             if data_type == "scalar":
@@ -382,9 +462,22 @@ class PODmodes:
     def writeModes(self, outputDir: str, fieldName: str = "PODmode") -> None:
         """
         Write the POD modes to files. Should be called after `getModes`.
-        Args:
-            outputDir (str): The directory where the mode files will be saved.
-            fieldName (str): The base name for the mode files.
+
+        Parameters
+        ----------
+        outputDir : str
+            The directory where the mode files will be saved, e.g., case folder.
+        fieldName : str, optional
+            The base name for the mode files, by default 'PODmode'.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If POD modes have not been computed yet.
         """
         if not hasattr(self, "modes"):
             raise ValueError(
@@ -406,38 +499,64 @@ class PODmodes:
             with multiprocessing.Pool() as pool:
                 pool.map(write_single_mode, tasks)
 
-    def _performPOD(self, y: np.ndarray) -> np.ndarray:
+    def _performPOD(self, y: np.ndarray) -> None:
         """
         Perform Proper Orthogonal Decomposition (POD) on the training data.
-        Args:
-            y (np.ndarray): The training data for which POD is to be performed.
-            The training data should be a 2D array where each row is a flattened field.
-        Returns:
-            np.ndarray: The coefficients of the POD modes.
-        Raises:
-            ValueError: If the rank is greater than the number of modes.
+
+        Parameters
+        ----------
+        y : np.ndarray
+            The training data for which POD is to be performed. Should be a 2D array where each row is a flattened field.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If the rank is greater than the number of modes.
         """
         if not hasattr(self, "cellModes"):
-            self._reduction(y)
+            self.cellModes, self.s_all, self._coeffs = self._reduction(
+                y, POD_algo=self.POD_algo
+            )
         if self._rank > self.cellModes.shape[0]:
             raise ValueError("Rank is greater than the number of modes.")
 
-    def _reduction(self, y: np.ndarray) -> None:
+    @staticmethod
+    def _reduction(y: np.ndarray, POD_algo: str) -> tuple:
         """
-        Perform Proper Orthogonal Decomposition (POD) on the training data using
-        the specified method (SVD or eigenvalue decomposition).
-        Args:
-            y (np.ndarray): The training data for which POD is to be performed.
-            The training data should be a 2D array where each row is a flattened field.
-        Returns:
-            np.ndarray: The coefficients of the POD modes.
+        Perform Proper Orthogonal Decomposition (POD) on the training data using the specified method.
+
+        Parameters
+        ----------
+        y : np.ndarray
+            The training data for which POD is to be performed. Should be a 2D array where each row is a flattened field.
+        POD_algo : str
+            The algorithm to use ('svd' or 'eigen').
+
+        Returns
+        -------
+        tuple
+            cellModes : np.ndarray
+                The POD modes.
+            s_all : np.ndarray
+                The singular values or eigenvalues.
+            _coeffs : np.ndarray
+                The coefficients of the POD modes.
+
+        Raises
+        ------
+        ValueError
+            If POD_algo is not 'svd' or 'eigen'.
         """
-        if self.POD_algo == "svd":
+        if POD_algo == "svd":
             # SVD-based POD
-            u, self.s_all, self.cellModes = svd(y, full_matrices=False)
-            self._coeffs = u @ np.diag(self.s_all)
+            u, s_all, cellModes = svd(y, full_matrices=False)
+            _coeffs = u @ np.diag(s_all)
             print(f"POD_SVD reduction completed.")
-        elif self.POD_algo == "eigen":
+        elif POD_algo == "eigen":
             # Eigenvalue-based POD
             N, M = y.shape
 
@@ -448,34 +567,57 @@ class PODmodes:
             sorted_eigenvalues = eigenvalues[sorted_indices]
             U = U[:, sorted_indices]
 
-            self.s_all = np.sqrt(sorted_eigenvalues)
-            self._coeffs = U @ np.diag(self.s_all)
+            s_all = np.sqrt(sorted_eigenvalues)
+            _coeffs = U @ np.diag(s_all)
 
-            self.cellModes = np.zeros((N, M))
+            cellModes = np.zeros((N, M))
             tolerance: float = 1e-10
             for i in range(N):
-                if self.s_all[i] > tolerance:
+                if s_all[i] > tolerance:
                     u_i = U[:, i]
-                    self.cellModes[i, :] = (1 / self.s_all[i]) * (u_i.T @ y)
+                    cellModes[i, :] = (1 / s_all[i]) * (u_i.T @ y)
             print("POD_eigen reduction completed.")
         else:
-            raise ValueError("Invalid POD method.")
+            raise ValueError("POD_algo must be 'svd' or 'eigen'.")
+
+        return cellModes, s_all, _coeffs
 
     def _truncation_error(self) -> np.ndarray:
         """
         Compute the truncation error for each mode.
-        Returns:
-            np.ndarray: The truncation error for each mode.
+
+        Returns
+        -------
+        tuple of np.ndarray
+            truncation_error : np.ndarray
+                The truncation error for each mode.
+            projection_error : np.ndarray
+                The projection error for each mode.
         """
         total_energy: float = np.sum(self.s_all**2)
         cumulative_energy: np.ndarray = np.cumsum(self.s_all**2)
         truncation_error: np.ndarray = 1 - cumulative_energy / total_energy
-        projection_error: np.ndarray = np.sqrt(1 - cumulative_energy / total_energy)
+        numerical_noise_indices = np.where(truncation_error < 0)
+        truncation_error[numerical_noise_indices] = 0.0
+        projection_error: np.ndarray = np.sqrt(
+            truncation_error[numerical_noise_indices]
+        )
         return truncation_error, projection_error
 
-    def split_cellData(self) -> None:
+    def split_cellData(self) -> np.ndarray:
         """
         Split the cellModes into segments corresponding to each processor.
+        Not needed for current implementation but may be useful for future extensions.
+
+        Returns
+        -------
+        np.ndarray
+            Segmented cellModes for each processor.
+
+        Raises
+        ------
+        ValueError
+            If cellModes are not computed or field is not parallel.
         """
         if not hasattr(self, "cellModes"):
             raise ValueError("cellModes not computed yet. Call _performPOD first.")
@@ -498,18 +640,18 @@ class PODmodes:
 
         cellModes = []
         if self.fieldList[0].data_type == "scalar":
-            for procN in proc_idx:
+            for procI in proc_idx:
                 proc_cellModes = []
                 for i in range(self.cellModes.shape[0]):
-                    modes = self.cellModes[i, procN]
+                    modes = self.cellModes[i, procI]
                     proc_cellModes.append(modes)
                 cellModes.append(np.array(proc_cellModes))
         elif self.fieldList[0].data_type == "vector":
-            for procN in proc_idx:
+            for procI in proc_idx:
                 proc_cellModes = []
-                idx_x = procN
-                idx_y = [i + total_len for i in procN]
-                idx_z = [i + 2 * total_len for i in procN]
+                idx_x = procI
+                idx_y = [i + total_len for i in procI]
+                idx_z = [i + 2 * total_len for i in procI]
                 idx = idx_x + idx_y + idx_z
                 for i in range(self.cellModes.shape[0]):
                     modes = self.cellModes[i, idx]
@@ -518,16 +660,244 @@ class PODmodes:
 
         return cellModes
 
+    def _reconstructField_parallel(self, coeffs: np.ndarray, rank: int):
+        """
+        Reconstruct the original field from the POD modes and coefficients (parallel version).
+
+        Parameters
+        ----------
+        coeffs : np.ndarray
+            The coefficients for reconstructing the field.
+        rank : int
+            The number of modes to use for reconstruction.
+
+        Returns
+        -------
+        list
+            List of OpenFOAM field objects representing the reconstructed field for each processor.
+
+        Raises
+        ------
+        ValueError
+            If rank is greater than the number of modes.
+        """
+        if rank is None:
+            rank = len(self._modes)
+        if rank > len(self._modes):
+            raise ValueError("Rank cannot be greater than the number of modes.")
+
+        recOFFieldList = []
+        for procN in range(self._num_processors):
+            # Reconstruct internal field
+            recOFField = OFField.from_OFField(self._modes[procN][0])
+            recOFField.internalField = np.zeros(
+                self._modes[procN][0].internalField.shape
+            )
+            for i in range(rank):
+                recOFField.internalField += (
+                    coeffs[i] * self._modes[procN][i].internalField
+                )
+
+            # Reconstruct boundary field
+            for patch in self._modes[procN][0].boundaryField.keys():
+                patch_type = self._modes[procN][0].boundaryField[patch]["type"]
+                if (
+                    patch_type == "fixedValue"
+                    or patch_type == "fixedGradient"
+                    or patch_type == "processor"
+                    or patch_type == "calculated"
+                ):
+                    value_type = list(
+                        self._modes[procN][0].boundaryField[patch].keys()
+                    )[-1]
+                    if isinstance(
+                        self._modes[procN][0].boundaryField[patch][value_type],
+                        str,
+                    ):
+                        recOFField.boundaryField[patch][value_type] = self._modes[
+                            procN
+                        ][0].boundaryField[patch][value_type]
+                    elif isinstance(
+                        self._modes[procN][0].boundaryField[patch][value_type],
+                        np.ndarray,
+                    ):
+                        recOFField.boundaryField[patch][value_type] = np.zeros(
+                            self._modes[procN][0].boundaryField[patch][value_type].shape
+                        )
+                        for i in range(rank):
+                            recOFField.boundaryField[patch][value_type] += (
+                                coeffs[i]
+                                * self._modes[procN][i].boundaryField[patch][value_type]
+                            )
+                    else:
+                        raise ValueError(
+                            "Unknown boundary field value type for fixedValue, fixedGradient, or processor."
+                        )
+                else:
+                    recOFField.boundaryField[patch]["type"] = self._modes[procN][
+                        0
+                    ].boundaryField[patch]["type"]
+
+            recOFFieldList.append(recOFField)
+        return recOFFieldList
+
+    def _reconstructField_serial(self, coeffs: np.ndarray, rank: int):
+        """
+        Reconstruct the field using the given coefficients and rank (serial version).
+
+        Parameters
+        ----------
+        coeffs : np.ndarray
+            The coefficients for reconstructing the field.
+        rank : int
+            The number of modes to use for reconstruction.
+
+        Returns
+        -------
+        OFField
+            The reconstructed OpenFOAM field object.
+
+        Raises
+        ------
+        ValueError
+            If rank is greater than the number of modes.
+        """
+        if rank is None:
+            rank = len(self._modes)
+        if rank > len(self._modes):
+            raise ValueError("Rank cannot be greater than the number of modes.")
+
+        recOFField = OFField.from_OFField(self._modes[0])
+        recOFField.internalField = np.zeros(self._modes[0].internalField.shape)
+        for i in range(rank):
+            recOFField.internalField += coeffs[i] * self._modes[i].internalField
+
+        # Reconstruct boundary field
+        for patch in self._modes[0].boundaryField.keys():
+            patch_type = self._modes[0].boundaryField[patch]["type"]
+            if (
+                patch_type == "fixedValue"
+                or patch_type == "fixedGradient"
+                or patch_type == "calculated"
+            ):
+                value_type = list(self._modes[0].boundaryField[patch].keys())[-1]
+                if isinstance(self._modes[0].boundaryField[patch][value_type], str):
+                    recOFField.boundaryField[patch][value_type] = self._modes[
+                        0
+                    ].boundaryField[patch][value_type]
+                elif isinstance(
+                    self._modes[0].boundaryField[patch][value_type], np.ndarray
+                ):
+                    recOFField.boundaryField[patch][value_type] = np.zeros(
+                        self._modes[0].boundaryField[patch][value_type].shape
+                    )
+                    for i in range(rank):
+                        recOFField.boundaryField[patch][value_type] += (
+                            coeffs[i] * self._modes[i].boundaryField[patch][value_type]
+                        )
+                else:
+                    raise ValueError(
+                        "Unknown boundary field value type for fixedValue, fixedGradient, or calculated."
+                    )
+            else:
+                recOFField.boundaryField[patch]["type"] = self._modes[0].boundaryField[
+                    patch
+                ]["type"]
+
+        return recOFField
+
+    def writeRecField(
+        self,
+        coeffs: np.ndarray,
+        outputDir: str,
+        timeDir: int,
+        fieldName: str = "recField",
+    ):
+        """
+        Write the reconstructed field to files.
+
+        Parameters
+        ----------
+        coeffs : np.ndarray
+            The coefficients for reconstructing the field.
+        outputDir : str
+            The directory where the reconstructed field files will be saved.
+        timeDir : int
+            The time directory for the reconstructed field files.
+        fieldName : str, optional
+            The base name for the reconstructed field files, by default 'recField'.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If the reconstructed field format is incorrect.
+        """
+        if self.parallel:
+            recOFField = self._reconstructField_parallel(coeffs, self._rank)
+            if (
+                not isinstance(recOFField, list)
+                or len(recOFField) != self._num_processors
+            ):
+                raise ValueError(
+                    "For parallel fields, recOFFields should be a list with length equal to the number of processors."
+                )
+            tasks = [
+                (procN, timeDir, recOFField[procN], outputDir, fieldName)
+                for procN in range(self._num_processors)
+            ]
+            with multiprocessing.Pool() as pool:
+                pool.map(write_mode_worker, tasks)
+        else:
+            recOFField = self._reconstructField_serial(coeffs, self._rank)
+            if not isinstance(recOFField, OFField):
+                raise ValueError(
+                    "For non-parallel fields, recOFFields should be a single OFField object."
+                )
+            os.makedirs(f"{outputDir}/", exist_ok=True)
+            recOFField.writeField(f"{outputDir}/{fieldName}")
+
 
 def write_mode_worker(args):
+    """
+    Worker function to write a single POD mode to disk for parallel fields.
+
+    Parameters
+    ----------
+    args : tuple
+        Tuple containing (procN, j, mode, outputDir, fieldName):
+            procN (int): Processor number.
+            j (int): Mode index.
+            mode (OFField): The POD mode object to write.
+            outputDir (str): Output directory path.
+            fieldName (str): Name for the output field file.
+    """
     procN, j, mode, outputDir, fieldName = args
     mode.parallel = False
-    os.makedirs(f"{outputDir}/processor{procN}/{j+1}", exist_ok=True)
-    mode.writeField(f"{outputDir}/processor{procN}/{j+1}/{fieldName}")
+    output_path = f"{outputDir}/processor{procN}/{j+1}"
+    if not os.path.exists(output_path):
+        os.makedirs(output_path, exist_ok=True)
+    mode.writeField(f"{output_path}/{fieldName}")
     mode.parallel = True
 
 
 def write_single_mode(args):
+    """
+    Worker function to write a single POD mode to disk for serial fields.
+
+    Parameters
+    ----------
+    args : tuple
+        Tuple containing (i, mode, outputDir, fieldName):
+            i (int): Mode index.
+            mode (OFField): The POD mode object to write.
+            outputDir (str): Output directory path.
+            fieldName (str): Name for the output field file.
+    """
     i, mode, outputDir, fieldName = args
-    os.makedirs(f"{outputDir}/{i+1}", exist_ok=True)
-    mode.writeField(f"{outputDir}/{i+1}/{fieldName}")
+    output_path = f"{outputDir}/{i+1}"
+    os.makedirs(output_path, exist_ok=True)
+    mode.writeField(f"{output_path}/{fieldName}")
