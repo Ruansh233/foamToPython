@@ -79,7 +79,7 @@ class PODmodes:
     def coeffs(self):
         if not hasattr(self, "_coeffs"):
             self._performPOD()
-        return self._coeffs[: self._rank]
+        return self._coeffs[:, : self._rank]
 
     def getModes(self) -> None:
         """
@@ -104,12 +104,16 @@ class PODmodes:
                     self.fieldList
                 )
 
-        print("Convert field to ndarray:", time.time() - self.start_time)
+        print(
+            "Convert field to ndarray at time: {:.3f} s".format(
+                time.time() - self.start_time
+            )
+        )
 
         self._performPOD(self.data_matrix)
         self.truncation_error, self.projection_error = self._truncation_error()
 
-        print("Perform POD:", time.time() - self.start_time)
+        print("Perform POD at time: {:.3f} s".format(time.time() - self.start_time))
 
         if self.fieldList[0].parallel:
             with multiprocessing.Pool() as pool:
@@ -168,7 +172,7 @@ class PODmodes:
                 self.fieldList[0].parallel,
             )
 
-        print("Create modes:", time.time() - self.start_time)
+        print("Create modes at time: {:.3f} s".format(time.time() - self.start_time))
 
     @staticmethod
     def _field2ndarray_serial(fieldList: list) -> np.ndarray:
@@ -538,13 +542,12 @@ class PODmodes:
 
         Returns
         -------
-        tuple
-            cellModes : np.ndarray
-                The POD modes.
-            s_all : np.ndarray
-                The singular values or eigenvalues.
-            _coeffs : np.ndarray
-                The coefficients of the POD modes.
+        cellModes : np.ndarray
+            The POD modes.
+        s_all : np.ndarray
+            The singular values or eigenvalues.
+        _coeffs : np.ndarray
+            The coefficients of the POD modes.
 
         Raises
         ------
@@ -599,9 +602,7 @@ class PODmodes:
         truncation_error: np.ndarray = 1 - cumulative_energy / total_energy
         numerical_noise_indices = np.where(truncation_error < 0)
         truncation_error[numerical_noise_indices] = 0.0
-        projection_error: np.ndarray = np.sqrt(
-            truncation_error[numerical_noise_indices]
-        )
+        projection_error: np.ndarray = np.sqrt(truncation_error)
         return truncation_error, projection_error
 
     def split_cellData(self) -> np.ndarray:
