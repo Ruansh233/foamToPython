@@ -50,6 +50,7 @@ class PODmodes:
         )
 
         self.start_time = time.time()
+        self.parallel = fieldList[0].parallel
 
         self.run: bool = run
         if self.run:
@@ -661,16 +662,14 @@ class PODmodes:
 
         return cellModes
 
-    def _reconstructField_parallel(self, coeffs: np.ndarray, rank: int):
+    def _reconstructField_parallel(self, coeffs: np.ndarray):
         """
         Reconstruct the original field from the POD modes and coefficients (parallel version).
 
         Parameters
         ----------
         coeffs : np.ndarray
-            The coefficients for reconstructing the field.
-        rank : int
-            The number of modes to use for reconstruction.
+            The coefficients for reconstructing the field. Shape should be (rank,).
 
         Returns
         -------
@@ -682,9 +681,8 @@ class PODmodes:
         ValueError
             If rank is greater than the number of modes.
         """
-        if rank is None:
-            rank = len(self._modes)
-        if rank > len(self._modes):
+        rank = coeffs.shape[0]
+        if rank > len(self._modes[0]):
             raise ValueError("Rank cannot be greater than the number of modes.")
 
         recOFFieldList = []
@@ -742,16 +740,14 @@ class PODmodes:
             recOFFieldList.append(recOFField)
         return recOFFieldList
 
-    def _reconstructField_serial(self, coeffs: np.ndarray, rank: int):
+    def _reconstructField_serial(self, coeffs: np.ndarray):
         """
         Reconstruct the field using the given coefficients and rank (serial version).
 
         Parameters
         ----------
         coeffs : np.ndarray
-            The coefficients for reconstructing the field.
-        rank : int
-            The number of modes to use for reconstruction.
+            The coefficients for reconstructing the field. Shape should be (rank,).
 
         Returns
         -------
@@ -763,8 +759,7 @@ class PODmodes:
         ValueError
             If rank is greater than the number of modes.
         """
-        if rank is None:
-            rank = len(self._modes)
+        rank = coeffs.shape[0]
         if rank > len(self._modes):
             raise ValueError("Rank cannot be greater than the number of modes.")
 
@@ -822,7 +817,7 @@ class PODmodes:
         coeffs : np.ndarray
             The coefficients for reconstructing the field.
         outputDir : str
-            The directory where the reconstructed field files will be saved.
+            The case directory where the reconstructed field files will be saved.
         timeDir : int
             The time directory for the reconstructed field files.
         fieldName : str, optional
@@ -838,7 +833,7 @@ class PODmodes:
             If the reconstructed field format is incorrect.
         """
         if self.parallel:
-            recOFField = self._reconstructField_parallel(coeffs, self._rank)
+            recOFField = self._reconstructField_parallel(coeffs)
             if (
                 not isinstance(recOFField, list)
                 or len(recOFField) != self._num_processors
@@ -847,19 +842,19 @@ class PODmodes:
                     "For parallel fields, recOFFields should be a list with length equal to the number of processors."
                 )
             tasks = [
-                (procN, timeDir, recOFField[procN], outputDir, fieldName)
+                (procN, timeDir - 1, recOFField[procN], outputDir, fieldName)
                 for procN in range(self._num_processors)
             ]
             with multiprocessing.Pool() as pool:
                 pool.map(write_mode_worker, tasks)
         else:
-            recOFField = self._reconstructField_serial(coeffs, self._rank)
+            recOFField = self._reconstructField_serial(coeffs)
             if not isinstance(recOFField, OFField):
                 raise ValueError(
                     "For non-parallel fields, recOFFields should be a single OFField object."
                 )
             os.makedirs(f"{outputDir}/", exist_ok=True)
-            recOFField.writeField(f"{outputDir}/{fieldName}")
+            recOFField.writeField(f"{outputDir}/{timeDir}/{fieldName}")
 
 
 def write_mode_worker(args):
