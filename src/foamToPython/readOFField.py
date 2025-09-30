@@ -56,6 +56,9 @@ class OFField:
     data_type: Optional[str]
     read_data: bool
     parallel: bool
+    reconstructPar: bool
+    caseDir: str
+    num_processors: Optional[int]
     _field_loaded: bool
     _dimensions: np.ndarray
     _internalField: Union[float, np.ndarray]
@@ -69,6 +72,7 @@ class OFField:
         data_type: str = None,
         read_data: bool = False,
         parallel: bool = False,
+        reconstructPar: bool = False
     ) -> None:
         """
         Initialize OFField object.
@@ -97,10 +101,15 @@ class OFField:
             self.timeName = filename.split("/")[-2]
         else:
             self.filename = ""
+            self.caseDir = ""
             self.fieldName = ""
             self.timeName = ""
 
         self.parallel = parallel
+        self.reconstructPar = reconstructPar
+
+        if not self.parallel and self.reconstructPar:
+            raise ValueError("reconstructPar can only be True if parallel is True.")
 
         self.data_type = data_type
         self.read_data = read_data
@@ -149,6 +158,7 @@ class OFField:
         obj.data_type = other.data_type
         obj.read_data = other.read_data
         obj.parallel = other.parallel
+        obj.reconstructPar = other.reconstructPar
         obj.internal_field_type = other.internal_field_type
         obj._dimensions = other._dimensions.copy()
         obj._internalField = (
@@ -323,10 +333,44 @@ class OFField:
             _boundaryField.append(boundary)
             internal_field_types.append(field_type)
 
-        self.internal_field_type = internal_field_types[0]
-        self._num_processors = len(_internalField)
+        if all("nonuniform" in ft for ft in internal_field_types):
+            self.internal_field_type = "nonuniform"
+        else:
+            self.internal_field_type = "uniform"
+        self._num_processors = len(results)
 
-        return _dimensions, _internalField, _boundaryField, internal_field_types[0]
+        return _dimensions, _internalField, _boundaryField, self.internal_field_type
+
+    # def _reconstruct_fields(self):
+    #     """
+    #     Reconstruct parallel fields as a single field.
+    #     """
+    #     if self.internal_field_type == "uniform":
+    #         self._internalField = self._internalField[0]
+    #     elif self.internal_field_type == "nonuniform":
+    #         if self.data_type == "scalar":
+    #             self._internalField = np.concatenate(self._internalField)
+    #         elif self.data_type == "vector":
+    #             self._internalField = np.vstack(self._internalField)
+    #         else:
+    #             sys.exit("Unknown data_type. please use 'scalar' or 'vector'.")
+    #     else:
+    #         raise ValueError(
+    #             "internal_field_type should be 'uniform' or 'nonuniform'"
+    #         )
+
+    #     # Merge boundary fields of different patches in different processors
+    #     merged_boundary = {}
+    #     for boundary in self._boundaryField:
+    #         for patch, props in boundary.items():
+    #             if "procBoundary" in patch:
+    #                 continue  # Skip processor boundary patches
+    #             if patch not in merged_boundary:
+    #                 merged_boundary[patch] = props
+    #             else:
+    #                 # If the patch already exists, we can choose to update or ignore
+    #                 # Here we simply ignore to keep the first occurrence
+    #                 pass
 
     @staticmethod
     def _process_uniform(line: str, data_type: str):
@@ -710,7 +754,7 @@ class OFField:
         fieldDir: str,
         internalField: Union[float, np.ndarray],
         boundaryField: Dict[str, Dict[str, Any]],
-        timeDir: Optional[str] = None,
+        timeDir: Optional[int] = None,
         fieldName: Optional[str] = None,
     ) -> None:
         """
