@@ -9,4 +9,3 @@ __all__ = [
 
 from .readOFList import readList, readListList, writeList
 from .readOFField import OFField
-from .PODopenFOAM import PODmodes
