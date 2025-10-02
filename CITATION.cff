@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Shenhui"
+  given-names: "Ruan"
+  orcid: "https://orcid.org/0009-0006-9046-0220"
+title: "IO package for OpenFOAM and numpy"
+version: 0.0.1
+date-released: 2025-10-02
+url: "https://github.com/Ruansh233/foamToPython#"
