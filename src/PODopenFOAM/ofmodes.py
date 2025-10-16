@@ -323,39 +323,86 @@ class PODmodes:
                 if isinstance(boundaryFields[0][patch][value_type], str):
                     continue
                 elif isinstance(boundaryFields[0][patch][value_type], np.ndarray):
-                    value_shape = boundaryFields[0][patch][value_type].ndim
-                else:
-                    raise ValueError(
-                        "Unknown boundary field value type for fixedValue, fixedGradient, or processor."
-                    )
-                if value_shape == 1:
-                    num_components: int = 1 if data_type == "scalar" else 3
-                    boundaryValues[patch] = np.zeros(
-                        (len(boundaryFields), num_components)
-                    )
-
+                    # loop over all boundaryFields to get the value_len
+                    value_len = 0
+                    uniform_indices = []
+                    patch_value_type = None
                     for i, field in enumerate(boundaryFields):
-                        if data_type == "scalar":
-                            boundaryValues[patch][i, :] = field[patch][value_type]
-                        elif data_type == "vector":
-                            boundaryValues[patch][i, :] = field[patch][value_type]
+                        if (
+                            data_type == "scalar"
+                            and boundaryFields[i][patch][value_type].size == 1
+                        ):
+                            uniform_indices.append(i)
+                        if (
+                            data_type == "vector"
+                            and boundaryFields[i][patch][value_type].ndim == 1
+                        ):
+                            uniform_indices.append(i)
 
-                elif value_shape == 2:
-                    num_points: int = boundaryFields[0][patch][value_type].shape[0]
-                    num_components: int = 1 if data_type == "scalar" else 3
-                    boundaryValues[patch] = np.zeros(
-                        (len(boundaryFields), num_points * num_components)
-                    )
-
-                    for i, field in enumerate(boundaryFields):
+                    if len(uniform_indices) == len(boundaryFields):
+                        patch_value_type = "uniform"
                         if data_type == "scalar":
-                            boundaryValues[patch][i, :] = field[patch][
-                                value_type
-                            ].flatten()
+                            value_len = 1
                         elif data_type == "vector":
+                            value_len = 3
+                    elif len(uniform_indices) == 0:
+                        patch_value_type = "nonuniform"
+                        value_len = boundaryFields[0][patch][value_type].size
+                    else:
+                        patch_value_type = "mixed"
+                        one_index = list(
+                            set(range(len(boundaryFields))) - set(uniform_indices)
+                        )
+                        value_len = boundaryFields[one_index[0]][patch][value_type].size
+
+                if data_type == "scalar":
+                    if (
+                        patch_value_type == "uniform"
+                        or patch_value_type == "nonuniform"
+                    ):
+                        boundaryValues[patch] = np.zeros(
+                            (len(boundaryFields), value_len)
+                        )
+                        for i, field in enumerate(boundaryFields):
+                            boundaryValues[patch][i, :] = field[patch][value_type]
+                    elif patch_value_type == "mixed":
+                        boundaryValues[patch] = np.zeros(
+                            (len(boundaryFields), value_len)
+                        )
+                        for i, field in enumerate(boundaryFields):
+                            if i in uniform_indices:
+                                boundaryValues[patch][i, :] = np.full(
+                                    (value_len,), field[patch][value_type]
+                                )
+                            else:
+                                boundaryValues[patch][i, :] = field[patch][value_type]
+
+                elif data_type == "vector":
+                    if patch_value_type == "uniform":
+                        boundaryValues[patch] = np.zeros((len(boundaryFields), 3))
+                        for i, field in enumerate(boundaryFields):
+                            boundaryValues[patch][i, :] = field[patch][value_type]
+                    elif patch_value_type == "nonuniform":
+                        boundaryValues[patch] = np.zeros(
+                            (len(boundaryFields), value_len)
+                        )
+                        for i, field in enumerate(boundaryFields):
                             boundaryValues[patch][i, :] = field[patch][
                                 value_type
                             ].T.flatten()
+                    elif patch_value_type == "mixed":
+                        boundaryValues[patch] = np.zeros(
+                            (len(boundaryFields), value_len)
+                        )
+                        for i, field in enumerate(boundaryFields):
+                            if i in uniform_indices:
+                                boundaryValues[patch][i, :] = np.tile(
+                                    field[patch][value_type], value_len // 3
+                                ).T.flatten()
+                            else:
+                                boundaryValues[patch][i, :] = field[patch][
+                                    value_type
+                                ].T.flatten()
 
                 # The mode equals self.coeffs.inverse() @ self.boundaryModes[patch]
                 boundaryValues[patch] = np.linalg.inv(coeffs) @ boundaryValues[patch]
@@ -431,34 +478,26 @@ class PODmodes:
                             value_type
                         ]
                     elif isinstance(bField[patch][value_type], np.ndarray):
-                        value_shape = bField[patch][value_type].ndim
-                        if value_shape == 1:
-                            if data_type == "scalar":
-                                mode.boundaryField[patch][value_type] = boundaryValues[
-                                    patch
-                                ][i, :]
-                            elif data_type == "vector":
-                                mode.boundaryField[patch][value_type] = boundaryValues[
-                                    patch
-                                ][i, :]
-                        elif value_shape == 2:
-                            num_points: int = bField[patch][value_type].shape[0]
-                            if data_type == "scalar":
-                                mode.boundaryField[patch][value_type] = boundaryValues[
-                                    patch
-                                ][i, :]
-                            elif data_type == "vector":
-                                mode.boundaryField[patch][value_type] = (
-                                    boundaryValues[patch][i, :]
-                                    .reshape((3, num_points))
-                                    .T
-                                )
+                        if data_type == "scalar":
+                            mode.boundaryField[patch][value_type] = boundaryValues[
+                                patch
+                            ][i, :]
+                        elif data_type == "vector":
+                            mode.boundaryField[patch][value_type] = (
+                                boundaryValues[patch][i, :].reshape(3, -1).T
+                            )
                     else:
                         raise ValueError(
                             "Unknown boundary field value type for fixedValue, fixedGradient, or processor."
                         )
-                else:
+                elif len(bField[patch].keys()) == 1:
                     mode.boundaryField[patch]["type"] = bField[patch]["type"]
+                else:
+                    raise ValueError(
+                        """Unknown boundary field value type for patch with single type.
+                        Supported types are fixedValue, fixedGradient, processor, calculated.
+                        or patch only with type."""
+                    )
 
             _modes.append(mode)
 
