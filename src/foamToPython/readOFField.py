@@ -74,6 +74,7 @@ class OFField:
         read_data: bool = False,
         parallel: bool = False,
         reconstructPar: bool = False,
+        num_processors: int = 8,
     ) -> None:
         """
         Initialize OFField object.
@@ -108,6 +109,7 @@ class OFField:
 
         self.parallel = parallel
         self.reconstructPar = reconstructPar
+        self.num_processors = num_processors
 
         if not self.parallel and self.reconstructPar:
             raise ValueError("reconstructPar can only be True if parallel is True.")
@@ -323,11 +325,7 @@ class OFField:
             if not os.path.isfile(proc_path):
                 raise FileNotFoundError(f"Field file not found in {proc_path}")
 
-        # Use optimized multiprocessing with better resource management
-        # For 64 cores, use all available cores but with optimized process reuse
-        num_workers = min(len(proc_paths), os.cpu_count())
-
-        with multiprocessing.Pool(processes=num_workers) as pool:
+        with multiprocessing.Pool(processes=self.num_processors) as pool:
             # Use the optimized reading function
             results = pool.starmap(
                 self._readField,
@@ -986,7 +984,7 @@ class OFField:
             for idx in range(num_processors)
         ]
 
-        with multiprocessing.Pool() as pool:
+        with multiprocessing.Pool(processes=self.num_processors) as pool:
             list(
                 pool.imap(
                     self._writeField_wrapper,

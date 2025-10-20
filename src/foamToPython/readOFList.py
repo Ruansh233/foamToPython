@@ -107,36 +107,71 @@ def _extractListList(content, data_type):
     return np.array(data_list)
 
 
-def readList(filename, data_type):
+def readListList(fileName, data_type):
     try:
-        with open(filename, "rb") as f:
+        with open(fileName, "rb") as f:
             pass
     except FileNotFoundError:
-        sys.exit(f"File {filename} not found. Please check the file path.")
-    with open(f"{filename}", "rb") as f:
-        return _extractList(f.readlines(), data_type)
-
-
-def readListList(filename, data_type):
-    try:
-        with open(filename, "rb") as f:
-            pass
-    except FileNotFoundError:
-        sys.exit(f"File {filename} not found. Please check the file path.")
-    with open(f"{filename}", "rb") as f:
+        sys.exit(f"File {fileName} not found. Please check the file path.")
+    with open(f"{fileName}", "rb") as f:
         return _extractListList(f.readlines(), data_type)
 
 
-def writeList(data, data_type, filename, object_name="None"):
+def _extractUniformList(file, data_type):
+    for line in file:
+        line = line.decode("utf-8").strip()
+        if "{" in line and "}" in line:
+            length, data = line.split("{")
+            length = int(length.strip())
+            data = data.replace("}", "").strip()
+            if data_type == "label":
+                return length, np.array([int(data)])
+            elif data_type == "scalar":
+                return length, np.array([float(data)])
+            elif data_type == "vector":
+                vector_values = data.strip("()").split()
+                return length, np.array(
+                    [
+                        [
+                            float(vector_values[0]),
+                            float(vector_values[1]),
+                            float(vector_values[2]),
+                        ]
+                    ]
+                )
+            else:
+                sys.exit("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
+
+
+def readList(fileName, data_type, fullLength=True):
+    try:
+        with open(fileName, "rb") as f:
+            pass
+    except FileNotFoundError:
+        sys.exit(f"File {fileName} not found. Please check the file path.")
+    with open(f"{fileName}", "rb") as f:
+        file_content = f.readlines()
+        file_length = len(file_content)
+        if file_length == 1:
+            length, data = _extractUniformList(file_content, data_type)
+            if fullLength:
+                return np.repeat(data, length, axis=0)
+            else:
+                return data            
+        else:
+            return _extractList(file_content, data_type)
+
+
+def writeList(data, data_type, fileName, object_name="None"):
     """
     Write data to a file
     :param data: data to write
     :param data_type: data type
-    :param filename: file name
+    :param fileName: file name
     :return: None
     """
 
-    with open(filename, "w") as f:
+    with open(fileName, "w") as f:
         output = []
 
         thisHeader = header.replace("className;", f"{data_type}List;")
