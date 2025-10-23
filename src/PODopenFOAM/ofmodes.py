@@ -1,6 +1,7 @@
 import sys
 import re
 import os
+from typing import List, Dict, Any, Optional, Tuple, Union
 
 import multiprocessing
 
@@ -562,14 +563,14 @@ class PODmodes:
             If the rank is greater than the number of modes.
         """
         if not hasattr(self, "cellModes"):
-            self.cellModes, self.s_all, self._coeffs = self._reduction(
+            self.cellModes, self.s_all, self._coeffs = self.reduction(
                 y, POD_algo=self.POD_algo
             )
         if self._rank > self.cellModes.shape[0]:
             raise ValueError("Rank is greater than the number of modes.")
 
     @staticmethod
-    def _reduction(y: np.ndarray, POD_algo: str) -> tuple:
+    def reduction(y: np.ndarray, POD_algo: str) -> tuple:
         """
         Perform Proper Orthogonal Decomposition (POD) on the training data using the specified method.
 
@@ -614,11 +615,9 @@ class PODmodes:
             _coeffs = U @ np.diag(s_all)
 
             cellModes = np.zeros((N, M))
-            tolerance: float = 1e-10
             for i in range(N):
-                if s_all[i] > tolerance:
-                    u_i = U[:, i]
-                    cellModes[i, :] = (1 / s_all[i]) * (u_i.T @ y)
+                u_i = U[:, i]
+                cellModes[i, :] = (1 / s_all[i]) * (u_i.T @ y)
             print("POD_eigen reduction completed.")
         else:
             raise ValueError("POD_algo must be 'svd' or 'eigen'.")
@@ -701,14 +700,21 @@ class PODmodes:
 
         return cellModes
 
-    def _reconstructField_parallel(self, coeffs: np.ndarray):
+    @staticmethod
+    def _reconstructField_parallel(
+        _modes: List[OFField], coeffs: np.ndarray, _num_processors: int
+    ):
         """
         Reconstruct the original field from the POD modes and coefficients (parallel version).
 
         Parameters
         ----------
+        _modes : List[List[OFField]]
+            The list of POD mode OpenFOAM field objects for each processor.
         coeffs : np.ndarray
             The coefficients for reconstructing the field. Shape should be (rank,).
+        _num_processors : int
+            The number of processors.
 
         Returns
         -------
@@ -721,70 +727,69 @@ class PODmodes:
             If rank is greater than the number of modes.
         """
         rank = coeffs.shape[0]
-        if rank > len(self._modes[0]):
+        if rank > len(_modes[0]):
             raise ValueError("Rank cannot be greater than the number of modes.")
+        if coeffs.ndim != 1:
+            raise ValueError("Coefficients should be a 1D array.")
 
         recOFFieldList = []
-        for procN in range(self._num_processors):
+        for procN in range(_num_processors):
             # Reconstruct internal field
-            recOFField = OFField.from_OFField(self._modes[procN][0])
-            recOFField.internalField = np.zeros(
-                self._modes[procN][0].internalField.shape
-            )
+            recOFField = OFField.from_OFField(_modes[procN][0])
+            recOFField.internalField = np.zeros(_modes[procN][0].internalField.shape)
             for i in range(rank):
-                recOFField.internalField += (
-                    coeffs[i] * self._modes[procN][i].internalField
-                )
+                recOFField.internalField += coeffs[i] * _modes[procN][i].internalField
 
             # Reconstruct boundary field
-            for patch in self._modes[procN][0].boundaryField.keys():
-                patch_type = self._modes[procN][0].boundaryField[patch]["type"]
+            for patch in _modes[procN][0].boundaryField.keys():
+                patch_type = _modes[procN][0].boundaryField[patch]["type"]
                 if (
                     patch_type == "fixedValue"
                     or patch_type == "fixedGradient"
                     or patch_type == "processor"
                     or patch_type == "calculated"
                 ):
-                    value_type = list(
-                        self._modes[procN][0].boundaryField[patch].keys()
-                    )[-1]
+                    value_type = list(_modes[procN][0].boundaryField[patch].keys())[-1]
                     if isinstance(
-                        self._modes[procN][0].boundaryField[patch][value_type],
+                        _modes[procN][0].boundaryField[patch][value_type],
                         str,
                     ):
-                        recOFField.boundaryField[patch][value_type] = self._modes[
-                            procN
-                        ][0].boundaryField[patch][value_type]
+                        recOFField.boundaryField[patch][value_type] = _modes[procN][
+                            0
+                        ].boundaryField[patch][value_type]
                     elif isinstance(
-                        self._modes[procN][0].boundaryField[patch][value_type],
+                        _modes[procN][0].boundaryField[patch][value_type],
                         np.ndarray,
                     ):
                         recOFField.boundaryField[patch][value_type] = np.zeros(
-                            self._modes[procN][0].boundaryField[patch][value_type].shape
+                            _modes[procN][0].boundaryField[patch][value_type].shape
                         )
                         for i in range(rank):
                             recOFField.boundaryField[patch][value_type] += (
                                 coeffs[i]
-                                * self._modes[procN][i].boundaryField[patch][value_type]
+                                * _modes[procN][i].boundaryField[patch][value_type]
                             )
                     else:
                         raise ValueError(
                             "Unknown boundary field value type for fixedValue, fixedGradient, or processor."
                         )
                 else:
-                    recOFField.boundaryField[patch]["type"] = self._modes[procN][
+                    recOFField.boundaryField[patch]["type"] = _modes[procN][
                         0
                     ].boundaryField[patch]["type"]
 
             recOFFieldList.append(recOFField)
         return recOFFieldList
 
-    def _reconstructField_serial(self, coeffs: np.ndarray):
+    @staticmethod
+    def _reconstructField_serial(_modes: List[OFField], coeffs: np.ndarray):
         """
         Reconstruct the field using the given coefficients and rank (serial version).
 
         Parameters
         ----------
+        _modes : List[OFField]
+            The list of POD mode OpenFOAM field objects.
         coeffs : np.ndarray
             The coefficients for reconstructing the field. Shape should be (rank,).
 
@@ -799,43 +804,43 @@ class PODmodes:
             If rank is greater than the number of modes.
         """
         rank = coeffs.shape[0]
-        if rank > len(self._modes):
-            raise ValueError("Rank cannot be greater than the number of modes.")
+        if rank != len(_modes):
+            raise ValueError("Rank must match the number of modes.")
+        if coeffs.ndim != 1:
+            raise ValueError("Coefficients should be a 1D array.")
 
-        recOFField = OFField.from_OFField(self._modes[0])
-        recOFField.internalField = np.zeros(self._modes[0].internalField.shape)
+        recOFField = OFField.from_OFField(_modes[0])
+        recOFField.internalField = np.zeros(_modes[0].internalField.shape)
         for i in range(rank):
-            recOFField.internalField += coeffs[i] * self._modes[i].internalField
+            recOFField.internalField += coeffs[i] * _modes[i].internalField
 
         # Reconstruct boundary field
-        for patch in self._modes[0].boundaryField.keys():
-            patch_type = self._modes[0].boundaryField[patch]["type"]
+        for patch in _modes[0].boundaryField.keys():
+            patch_type = _modes[0].boundaryField[patch]["type"]
             if (
                 patch_type == "fixedValue"
                 or patch_type == "fixedGradient"
                 or patch_type == "calculated"
             ):
-                value_type = list(self._modes[0].boundaryField[patch].keys())[-1]
-                if isinstance(self._modes[0].boundaryField[patch][value_type], str):
-                    recOFField.boundaryField[patch][value_type] = self._modes[
+                value_type = list(_modes[0].boundaryField[patch].keys())[-1]
+                if isinstance(_modes[0].boundaryField[patch][value_type], str):
+                    recOFField.boundaryField[patch][value_type] = _modes[
                         0
                     ].boundaryField[patch][value_type]
-                elif isinstance(
-                    self._modes[0].boundaryField[patch][value_type], np.ndarray
-                ):
+                elif isinstance(_modes[0].boundaryField[patch][value_type], np.ndarray):
                     recOFField.boundaryField[patch][value_type] = np.zeros(
-                        self._modes[0].boundaryField[patch][value_type].shape
+                        _modes[0].boundaryField[patch][value_type].shape
                     )
                     for i in range(rank):
                         recOFField.boundaryField[patch][value_type] += (
-                            coeffs[i] * self._modes[i].boundaryField[patch][value_type]
+                            coeffs[i] * _modes[i].boundaryField[patch][value_type]
                         )
                 else:
                     raise ValueError(
                         "Unknown boundary field value type for fixedValue, fixedGradient, or calculated."
                     )
             else:
-                recOFField.boundaryField[patch]["type"] = self._modes[0].boundaryField[
+                recOFField.boundaryField[patch]["type"] = _modes[0].boundaryField[
                     patch
                 ]["type"]
 
@@ -872,7 +877,9 @@ class PODmodes:
             If the reconstructed field format is incorrect.
         """
         if self.parallel:
-            recOFField = self._reconstructField_parallel(coeffs)
+            recOFField = self._reconstructField_parallel(
+                self._modes, coeffs, self._num_processors
+            )
             if (
                 not isinstance(recOFField, list)
                 or len(recOFField) != self._num_processors
@@ -887,7 +894,7 @@ class PODmodes:
             with multiprocessing.Pool() as pool:
                 pool.map(write_mode_worker, tasks)
         else:
-            recOFField = self._reconstructField_serial(coeffs)
+            recOFField = self._reconstructField_serial(self._modes, coeffs)
             if not isinstance(recOFField, OFField):
                 raise ValueError(
                     "For non-parallel fields, recOFFields should be a single OFField object."
