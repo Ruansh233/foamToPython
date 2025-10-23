@@ -571,7 +571,7 @@ class OFField:
                 raise ValueError(f"Expected '{{' after {patch_name}")
             i += 1
 
-            # Parse patch properties
+            # Parse patch properties and save all lines in a list, i.e., prop_lines
             props = {}
             brace_count = 1
             prop_lines = []
@@ -591,6 +591,7 @@ class OFField:
             for l in prop_lines:
                 if ";" in l:
                     parts = l.split(None, 1)
+                    # Handle single-line key-value pairs (e.g., type fixedValue;)
                     if len(parts) == 2:
                         key, value = parts
                         value_lines.append(value)
@@ -627,6 +628,7 @@ class OFField:
                         elif value_str.startswith("nonuniform List<vector>"):
                             # read scalar list
                             if data_type == "scalar":
+                                value_str = value_str.split("(", 1)[1].rsplit(")", 1)[0]
                                 scalar_match = re.findall(
                                     r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?",
                                     value_str,
@@ -635,6 +637,7 @@ class OFField:
                                     props[key] = np.array(
                                         [float(x) for x in scalar_match]
                                     )
+                                # read "value           nonuniform List<vector> 0();" for parallel case
                                 elif parallel:
                                     props[key] = value_str
                                 else:
@@ -651,6 +654,7 @@ class OFField:
                                     props[key] = np.array(
                                         [[float(x) for x in v.split()] for v in vecs]
                                     )
+                                # read "value           nonuniform List<vector> 0();" for parallel case
                                 elif parallel:
                                     props[key] = value_str
                                 else:
@@ -661,13 +665,14 @@ class OFField:
                             props[key] = value_str
                         key = None
                         value_lines = []
-                    else:
-                        parts = l.split(None, 1)
-                        if len(parts) == 2:
-                            k, v = parts
-                            # simple scalar value
-                            props[k] = v.replace(";", "").strip()
+                    # else:
+                    #     parts = l.split(None, 1)
+                    #     if len(parts) == 2:
+                    #         k, v = parts
+                    #         # simple scalar value
+                    #         props[k] = v.replace(";", "").strip()
                 else:
+                    # Handle multi-line values. This line does not end with ;
                     if key is None:
                         key = l.split()[0]
                         value_lines = l.split()[1:]
@@ -906,6 +911,19 @@ class OFField:
                             for v in value:
                                 f.write(f"{v:.8g}\n")
                             f.write(");\n")
+                        elif value.ndim == 2 and value.shape[0] == 1 and value.shape[1] != 3:
+                            # a scalar list in 2D array with shape (1, N)
+                            f.write(f"        {key} nonuniform List<scalar>\n")
+                            f.write(f"{value.shape[1]}\n")
+                            f.write("(\n")
+                            for v in value.T:
+                                f.write(f"{v:.8g}\n")
+                            f.write(");\n")
+                        elif value.ndim == 2 and value.shape[0] == 1 and value.shape[1] == 3:
+                            # a single vector in 2D array
+                            f.write(
+                                f"        {key} uniform ({value[0,0]:.8g} {value[0,1]:.8g} {value[0,2]:.8g});\n"
+                            )
                         elif value.ndim == 2 and value.shape[1] == 3:
                             # vector list
                             f.write(f"{key} nonuniform List<vector>\n")
