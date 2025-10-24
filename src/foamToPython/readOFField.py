@@ -74,7 +74,7 @@ class OFField:
         read_data: bool = False,
         parallel: bool = False,
         reconstructPar: bool = False,
-        num_processors: int = 8,
+        num_batch: int = 8,
     ) -> None:
         """
         Initialize OFField object.
@@ -89,6 +89,10 @@ class OFField:
             If True, read the field file upon initialization, by default False.
         parallel : bool, optional
             If True, enable parallel processing for multi-processor cases, by default False.
+        reconstructPar : bool, optional
+            If True, reconstruct the parallel field into a single field, by default False.
+        num_batch : int, optional
+            Number of processors to use for parallel reading, by default 8.
 
         Notes
         -----
@@ -109,7 +113,7 @@ class OFField:
 
         self.parallel = parallel
         self.reconstructPar = reconstructPar
-        self.num_processors = num_processors
+        self.num_batch = num_batch
 
         if not self.parallel and self.reconstructPar:
             raise ValueError("reconstructPar can only be True if parallel is True.")
@@ -191,6 +195,15 @@ class OFField:
 
     @property
     def internalField(self):
+        """
+        Get the internal field data.
+
+        Returns
+        -------
+        Union[float, np.ndarray, List[np.ndarray]]
+            For serial fields, this returns a float (for uniform scalar), a single array (for nonuniform), or value.
+            For parallel fields, this returns a list of arrays.
+        """
         if not self._field_loaded:
             (
                 self._dimensions,
@@ -207,6 +220,15 @@ class OFField:
 
     @property
     def boundaryField(self):
+        '''
+        Get the boundary field data.
+        
+        Returns
+        -------
+        Union[Dict, List[Dict]]
+            For serial fields, this returns a dictionary of boundary field properties.
+            For parallel fields, this returns a list of dictionaries.        
+        '''
         if not self._field_loaded:
             (
                 self._dimensions,
@@ -325,7 +347,7 @@ class OFField:
             if not os.path.isfile(proc_path):
                 raise FileNotFoundError(f"Field file not found in {proc_path}")
 
-        with multiprocessing.Pool(processes=self.num_processors) as pool:
+        with multiprocessing.Pool(processes=self.num_batch) as pool:
             # Use the optimized reading function
             results = pool.starmap(
                 self._readField,
@@ -911,7 +933,11 @@ class OFField:
                             for v in value:
                                 f.write(f"{v:.8g}\n")
                             f.write(");\n")
-                        elif value.ndim == 2 and value.shape[0] == 1 and value.shape[1] != 3:
+                        elif (
+                            value.ndim == 2
+                            and value.shape[0] == 1
+                            and value.shape[1] != 3
+                        ):
                             # a scalar list in 2D array with shape (1, N)
                             f.write(f"        {key} nonuniform List<scalar>\n")
                             f.write(f"{value.shape[1]}\n")
@@ -919,7 +945,11 @@ class OFField:
                             for v in value.T:
                                 f.write(f"{v:.8g}\n")
                             f.write(");\n")
-                        elif value.ndim == 2 and value.shape[0] == 1 and value.shape[1] == 3:
+                        elif (
+                            value.ndim == 2
+                            and value.shape[0] == 1
+                            and value.shape[1] == 3
+                        ):
                             # a single vector in 2D array
                             f.write(
                                 f"        {key} uniform ({value[0,0]:.8g} {value[0,1]:.8g} {value[0,2]:.8g});\n"
@@ -1002,7 +1032,7 @@ class OFField:
             for idx in range(num_processors)
         ]
 
-        with multiprocessing.Pool(processes=self.num_processors) as pool:
+        with multiprocessing.Pool(processes=self.num_batch) as pool:
             list(
                 pool.imap(
                     self._writeField_wrapper,

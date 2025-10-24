@@ -702,7 +702,7 @@ class PODmodes:
 
     @staticmethod
     def _reconstructField_parallel(
-        _modes: List[OFField], coeffs: np.ndarray, _num_processors: int
+        _modes: List[List[OFField]], coeffs: np.ndarray, _num_processors: int
     ):
         """
         Reconstruct the original field from the POD modes and coefficients (parallel version).
