@@ -296,7 +296,7 @@ class PODmodes:
         Parameters
         ----------
         boundaryFields : list
-            List of boundary field dictionaries.
+            List of boundary field dictionaries in one processor.
         coeffs : np.ndarray
             The coefficients of the POD modes.
         data_type : str

@@ -4,6 +4,7 @@ import os
 import re
 import mmap
 import multiprocessing
+import copy
 from typing import List, Dict, Any, Optional, Tuple, Union
 from .headerEnd import *
 
@@ -14,6 +15,11 @@ class OFField:
 
     This class provides functionality to read OpenFOAM field files in both serial and parallel
     formats, parse internal and boundary field data, and write field data back to OpenFOAM format.
+
+    For serial fields, the internal field is a ndarray (for nonuniform) or a float (for uniform scalar),
+    and boundary fields are stored in a dictionary.
+    For parallel fields, the internal field is a list of ndarrays (one per processor), and boundary fields
+    are stored in a list of dictionaries (one per processor).
 
     Attributes
     ----------
@@ -54,18 +60,17 @@ class OFField:
     filename: str
     fieldName: str
     timeName: str
-    data_type: Optional[str]
+    data_type: str
     read_data: bool
     parallel: bool
     reconstructPar: bool
     caseDir: str
-    num_processors: Optional[int]
+    num_batch: int
     _field_loaded: bool
     _dimensions: np.ndarray
-    _internalField: Union[float, np.ndarray]
-    internal_field_type: Optional[str]
-    num_data_: Optional[int]
-    _boundaryField: Dict[str, Dict[str, Any]]
+    _internalField: Union[float, np.ndarray, List[np.ndarray]]
+    internal_field_type: str
+    _boundaryField: Dict[Dict[str, Dict[str, Any]], List[Dict[str, Dict[str, Any]]]]
 
     def __init__(
         self,
@@ -157,25 +162,49 @@ class OFField:
         This method performs a deep copy of arrays and dictionaries to ensure
         the new instance is independent of the original object.
         """
-        obj = cls()
-        obj.filename = other.filename
-        obj.caseDir = other.caseDir
-        obj.fieldName = other.fieldName
-        obj.timeName = other.timeName
-        obj.data_type = other.data_type
-        obj.read_data = other.read_data
-        obj.parallel = other.parallel
-        obj.reconstructPar = other.reconstructPar
-        obj.internal_field_type = other.internal_field_type
-        obj._dimensions = other._dimensions.copy()
-        obj._internalField = (
-            other._internalField.copy()
-            if isinstance(other._internalField, np.ndarray)
-            else other._internalField
-        )
-        obj._boundaryField = {k: v.copy() for k, v in other._boundaryField.items()}
-        obj._field_loaded = other._field_loaded
-        return obj
+        new_field = cls()
+
+        new_field.filename = other.filename
+        new_field.caseDir = other.caseDir
+        new_field.fieldName = other.fieldName
+        new_field.timeName = other.timeName
+
+        # simple attributes
+        new_field.data_type = other.data_type
+        new_field.read_data = other.read_data
+        new_field.parallel = other.parallel
+        new_field.reconstructPar = other.reconstructPar
+        new_field.num_batch = other.num_batch
+
+        new_field._dimensions = other._dimensions.copy()
+
+        # internalField: handle ndarray, list-of-ndarrays (parallel case)
+        if isinstance(other._internalField, list):
+            new_field._internalField = [
+                arr.copy() if isinstance(arr, np.ndarray) else copy.deepcopy(arr)
+                for arr in other._internalField
+            ]
+        elif isinstance(other._internalField, np.ndarray):
+            new_field._internalField = other._internalField.copy()
+        else:
+            raise ValueError(
+                "Unsupported type for internalField. It should be ndarray or list of ndarrays."
+            )
+
+        # boundaryField: handle Dict[Dict[str, Dict[str, Any]], List[Dict[str, Dict[str, Any]]]] (parallel case)
+        if isinstance(other._boundaryField, list):
+            new_field._boundaryField = [
+                copy.deepcopy(bc) for bc in other._boundaryField
+            ]
+        elif isinstance(other._boundaryField, dict):
+            new_field._boundaryField = copy.deepcopy(other._boundaryField)
+        else:
+            raise ValueError(
+                "Unsupported type for boundaryField. It should be dict or list of dicts."
+            )
+
+        new_field._field_loaded = other._field_loaded
+        return new_field
 
     @property
     def dimensions(self):
@@ -220,15 +249,15 @@ class OFField:
 
     @property
     def boundaryField(self):
-        '''
+        """
         Get the boundary field data.
-        
+
         Returns
         -------
         Union[Dict, List[Dict]]
             For serial fields, this returns a dictionary of boundary field properties.
-            For parallel fields, this returns a list of dictionaries.        
-        '''
+            For parallel fields, this returns a list of dictionaries.
+        """
         if not self._field_loaded:
             (
                 self._dimensions,
@@ -687,12 +716,6 @@ class OFField:
                             props[key] = value_str
                         key = None
                         value_lines = []
-                    # else:
-                    #     parts = l.split(None, 1)
-                    #     if len(parts) == 2:
-                    #         k, v = parts
-                    #         # simple scalar value
-                    #         props[k] = v.replace(";", "").strip()
                 else:
                     # Handle multi-line values. This line does not end with ;
                     if key is None:
