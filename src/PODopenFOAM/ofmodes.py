@@ -10,9 +10,6 @@ from scipy.linalg import svd
 
 from foamToPython.readOFField import OFField
 
-import time
-
-
 # Class for computing POD modes from OpenFOAM field data
 class PODmodes:
     def __init__(
@@ -50,7 +47,6 @@ class PODmodes:
             fieldList[0]._num_processors if fieldList[0].parallel else 1
         )
 
-        self.start_time = time.time()
         self.parallel = fieldList[0].parallel
 
         self.run: bool = run
@@ -106,16 +102,8 @@ class PODmodes:
                     self.fieldList
                 )
 
-        print(
-            "Convert field to ndarray at time: {:.3f} s".format(
-                time.time() - self.start_time
-            )
-        )
-
         self._performPOD(self.data_matrix)
         self.truncation_error, self.projection_error = self._truncation_error()
-
-        print("Perform POD at time: {:.3f} s".format(time.time() - self.start_time))
 
         if self.fieldList[0].parallel:
             with multiprocessing.Pool() as pool:
@@ -173,8 +161,6 @@ class PODmodes:
                 self.fieldList[0].dimensions,
                 self.fieldList[0].parallel,
             )
-
-        print("Create modes at time: {:.3f} s".format(time.time() - self.start_time))
 
     @staticmethod
     def _field2ndarray_serial(fieldList: list) -> np.ndarray:
@@ -530,7 +516,7 @@ class PODmodes:
             )
         if self.fieldList[0].parallel:
             tasks = [
-                (procN, j, mode, outputDir, fieldName)
+                (procN, j+1, mode, outputDir, fieldName)
                 for procN, modeList in enumerate(self._modes)
                 for j, mode in enumerate(modeList[: self._rank])
             ]
@@ -538,7 +524,7 @@ class PODmodes:
                 pool.map(write_mode_worker, tasks)
         else:
             tasks = [
-                (i, mode, outputDir, fieldName)
+                (i+1, mode, outputDir, fieldName)
                 for i, mode in enumerate(self._modes[: self._rank])
             ]
             with multiprocessing.Pool() as pool:
@@ -888,7 +874,7 @@ class PODmodes:
                     "For parallel fields, recOFFields should be a list with length equal to the number of processors."
                 )
             tasks = [
-                (procN, timeDir - 1, recOFField[procN], outputDir, fieldName)
+                (procN, timeDir, recOFField[procN], outputDir, fieldName)
                 for procN in range(self._num_processors)
             ]
             with multiprocessing.Pool() as pool:
@@ -899,8 +885,7 @@ class PODmodes:
                 raise ValueError(
                     "For non-parallel fields, recOFFields should be a single OFField object."
                 )
-            os.makedirs(f"{outputDir}/", exist_ok=True)
-            recOFField.writeField(f"{outputDir}/{timeDir}/{fieldName}")
+            recOFField.writeField(outputDir, timeDir, fieldName)
 
 
 def write_mode_worker(args):
@@ -916,13 +901,18 @@ def write_mode_worker(args):
             mode (OFField): The POD mode object to write.
             outputDir (str): Output directory path.
             fieldName (str): Name for the output field file.
+
+    raises
+    ------
+    FileNotFoundError
+        If the parallel directory does not exist.
     """
     procN, j, mode, outputDir, fieldName = args
     mode.parallel = False
-    output_path = f"{outputDir}/processor{procN}/{j+1}"
+    output_path = f"{outputDir}/processor{procN}"
     if not os.path.exists(output_path):
-        os.makedirs(output_path, exist_ok=True)
-    mode.writeField(f"{output_path}/{fieldName}")
+        raise FileNotFoundError(f"Processor directory {output_path} does not exist.")
+    mode.writeField(output_path, j, fieldName)
     mode.parallel = True
 
 
@@ -940,6 +930,4 @@ def write_single_mode(args):
             fieldName (str): Name for the output field file.
     """
     i, mode, outputDir, fieldName = args
-    output_path = f"{outputDir}/{i+1}"
-    os.makedirs(output_path, exist_ok=True)
-    mode.writeField(f"{output_path}/{fieldName}")
+    mode.writeField(outputDir, i, fieldName)
