@@ -169,20 +169,22 @@ class OFField:
         new_field.fieldName = other.fieldName
         new_field.timeName = other.timeName
 
-        # simple attributes
+        # Simple attributes
         new_field.data_type = other.data_type
         new_field.read_data = other.read_data
         new_field.parallel = other.parallel
         new_field.reconstructPar = other.reconstructPar
         new_field.num_batch = other.num_batch
+        new_field.internal_field_type = other.internal_field_type
 
-        new_field._dimensions = other._dimensions.copy()
+        # Deep copy dimensions
+        new_field._dimensions = copy.deepcopy(other._dimensions)
 
-        # internalField: handle ndarray, list-of-ndarrays (parallel case)
+        # InternalField: handle ndarray, list-of-ndarrays (parallel case)
         if isinstance(other._internalField, list):
             new_field._internalField = [
-                arr.copy() if isinstance(arr, np.ndarray) else copy.deepcopy(arr)
-                for arr in other._internalField
+                other._internalField[procN].copy()
+                for procN in range(len(other._internalField))
             ]
         elif isinstance(other._internalField, np.ndarray):
             new_field._internalField = other._internalField.copy()
@@ -191,13 +193,34 @@ class OFField:
                 "Unsupported type for internalField. It should be ndarray or list of ndarrays."
             )
 
-        # boundaryField: handle Dict[Dict[str, Dict[str, Any]], List[Dict[str, Dict[str, Any]]]] (parallel case)
+        # BoundaryField: handle Dict[str, Dict[str, Any]] for serial, List[Dict[str, Dict[str, Any]]] for parallel
         if isinstance(other._boundaryField, list):
             new_field._boundaryField = [
-                copy.deepcopy(bc) for bc in other._boundaryField
+                {
+                    patch: {
+                        key: (
+                            value.copy()
+                            if isinstance(value, np.ndarray)
+                            else copy.deepcopy(value)
+                        )
+                        for key, value in info.items()
+                    }
+                    for patch, info in other._boundaryField[procN].items()
+                }
+                for procN in range(len(other._boundaryField))
             ]
         elif isinstance(other._boundaryField, dict):
-            new_field._boundaryField = copy.deepcopy(other._boundaryField)
+            new_field._boundaryField = {
+                patch: {
+                    key: (
+                        value.copy()
+                        if isinstance(value, np.ndarray)
+                        else copy.deepcopy(value)
+                    )
+                    for key, value in info.items()
+                }
+                for patch, info in other._boundaryField.items()
+            }
         else:
             raise ValueError(
                 "Unsupported type for boundaryField. It should be dict or list of dicts."
@@ -798,21 +821,21 @@ class OFField:
 
     def writeField(
         self,
-        fieldDir: str,
-        timeDir: Optional[str] = None,
-        fieldName: Optional[str] = None,
+        casePath: str,
+        timeDir: int,
+        fieldName: str,
     ) -> None:
         """
         Write field data to a file in OpenFOAM format.
 
         Parameters
         ----------
-        fieldDir : str
-            Path to output file or directory.
-        timeDir : str, optional
-            Time directory name, by default None. If None, extracted from fieldDir.
-        fieldName : str, optional
-            Field name, by default None. If None, extracted from fieldDir.
+        casePath : str
+            Path to the case directory.
+        timeDir : int
+            Time directory name.
+        fieldName : str
+            Field name.
 
         Returns
         -------
@@ -824,10 +847,10 @@ class OFField:
         parallel attribute of the object.
         """
         if self.parallel:
-            self._writeField_parallel(fieldDir, timeDir=timeDir, fieldName=fieldName)
+            self._writeField_parallel(casePath, timeDir=timeDir, fieldName=fieldName)
         else:
             self._writeField_serial(
-                fieldDir,
+                casePath,
                 internalField=self.internalField,
                 boundaryField=self.boundaryField,
                 timeDir=timeDir,
@@ -836,27 +859,27 @@ class OFField:
 
     def _writeField_serial(
         self,
-        fieldDir: str,
+        casePath: str,
         internalField: Union[float, np.ndarray],
         boundaryField: Dict[str, Dict[str, Any]],
-        timeDir: Optional[int] = None,
-        fieldName: Optional[str] = None,
+        timeDir: int,
+        fieldName: str,
     ) -> None:
         """
         Write field data to a file in OpenFOAM format (serial version).
 
         Parameters
         ----------
-        fieldDir : str
-            Path to output file.
+        casePath : str
+            Path to case folder or case/processorX for parallel case.
         internalField : Union[float, np.ndarray]
             Internal field data to write.
         boundaryField : Dict[str, Dict[str, Any]]
             Boundary field data organized by patch names.
-        timeDir : str, optional
-            Time directory name, by default None.
-        fieldName : str, optional
-            Field name, by default None.
+        timeDir : int
+            Time directory name.
+        fieldName : str
+            Field name.
 
         Returns
         -------
@@ -866,32 +889,21 @@ class OFField:
         ------
         ValueError
             If internal_field_type is invalid.
-        SystemExit
-            If fieldDir format is incorrect.
         """
-        _timeDir = timeDir if timeDir is not None else fieldDir.split("/")[-2]
-        _fieldName = fieldName if fieldName is not None else fieldDir.split("/")[-1]
 
-        _fieldDir = (
-            "/".join(fieldDir.split("/")[:-2]) + f"/{_timeDir}" + f"/{_fieldName}"
-        )
+        fieldDir = f"{casePath}/{timeDir}/{fieldName}"
 
-        try:
-            int(_timeDir)
-        except ValueError:
-            sys.exit(
-                "The fieldDir should be like '.../0/U' or '.../100/p'. "
-                "You can provide <timeDir> and <fieldName> to use other formats."
-            )
+        if not os.path.exists(f"{casePath}/{timeDir}"):
+            os.makedirs(f"{casePath}/{timeDir}")
 
-        with open(_fieldDir, "w") as f:
+        with open(fieldDir, "w") as f:
             # write header
             thisHeader = header.replace(
                 "className;", f"vol{self.data_type.capitalize()}Field;"
             )
-            thisHeader = thisHeader.replace("timeDir;", f"{_timeDir};")
+            thisHeader = thisHeader.replace("timeDir;", f"{timeDir};")
             thisHeader = thisHeader.replace(
-                "object      data;", f"object      {_fieldName};"
+                "object      data;", f"object      {fieldName};"
             )
             f.write(thisHeader + "\n\n")
 
@@ -996,21 +1008,21 @@ class OFField:
 
     def _writeField_parallel(
         self,
-        fieldDir: str,
-        timeDir: Optional[str] = None,
-        fieldName: Optional[str] = None,
+        casePath: str,
+        timeDir: int,
+        fieldName: str,
     ) -> None:
         """
         Write field data to processor directories in OpenFOAM format.
 
         Parameters
         ----------
-        fieldDir : str
-            Path to the field directory (e.g., '.../case/1/U').
-        timeDir : str, optional
-            Time directory name, by default None.
-        fieldName : str, optional
-            Field name, by default None.
+        casePath : str
+            Path to the case directory.
+        timeDir : int
+            Time directory name.
+        fieldName : str
+            Field name.
 
         Returns
         -------
@@ -1020,26 +1032,7 @@ class OFField:
         ------
         ValueError
             If internalField and boundaryField are not lists for parallel writing.
-        SystemExit
-            If fieldDir format is incorrect.
         """
-        _timeDir = timeDir if timeDir is not None else fieldDir.split("/")[-2]
-        _fieldName = fieldName if fieldName is not None else fieldDir.split("/")[-1]
-
-        _fieldDir = (
-            "/".join(fieldDir.split("/")[:-2])
-            + "/processor"
-            + f"/{_timeDir}"
-            + f"/{_fieldName}"
-        )
-
-        try:
-            int(_timeDir)
-        except ValueError:
-            sys.exit(
-                "The fieldDir should be like '.../0/U' or '.../100/p'. "
-                "You can provide <timeDir> and <fieldName> to use other formats."
-            )
 
         if not isinstance(self._internalField, list) or not isinstance(
             self._boundaryField, list
@@ -1051,8 +1044,7 @@ class OFField:
         num_processors = len(self._internalField)
 
         proc_field_path = [
-            _fieldDir.replace("processor", f"processor{idx}")
-            for idx in range(num_processors)
+            f"{casePath}/processor{idx}" for idx in range(num_processors)
         ]
 
         with multiprocessing.Pool(processes=self.num_batch) as pool:
@@ -1064,8 +1056,8 @@ class OFField:
                             proc_path,
                             self._internalField[idx],
                             self._boundaryField[idx],
-                            _timeDir,
-                            _fieldName,
+                            timeDir,
+                            fieldName,
                         )
                         for idx, proc_path in enumerate(proc_field_path)
                     ],
@@ -1073,7 +1065,7 @@ class OFField:
             )
 
     def _writeField_wrapper(self, args):
-        # args: (fieldDir, internalField, boundaryField, timeDir, fieldName)
+        # args: (casePath, internalField, boundaryField, timeDir, fieldName)
         return self._writeField_serial(*args)
 
 
