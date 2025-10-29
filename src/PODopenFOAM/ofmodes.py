@@ -10,9 +10,6 @@ from scipy.linalg import svd
 
 from foamToPython.readOFField import OFField
 
-import time
-
-
 # Class for computing POD modes from OpenFOAM field data
 class PODmodes:
     def __init__(
@@ -50,7 +47,6 @@ class PODmodes:
             fieldList[0]._num_processors if fieldList[0].parallel else 1
         )
 
-        self.start_time = time.time()
         self.parallel = fieldList[0].parallel
 
         self.run: bool = run
@@ -106,16 +102,8 @@ class PODmodes:
                     self.fieldList
                 )
 
-        print(
-            "Convert field to ndarray at time: {:.3f} s".format(
-                time.time() - self.start_time
-            )
-        )
-
         self._performPOD(self.data_matrix)
         self.truncation_error, self.projection_error = self._truncation_error()
-
-        print("Perform POD at time: {:.3f} s".format(time.time() - self.start_time))
 
         if self.fieldList[0].parallel:
             with multiprocessing.Pool() as pool:
@@ -173,8 +161,6 @@ class PODmodes:
                 self.fieldList[0].dimensions,
                 self.fieldList[0].parallel,
             )
-
-        print("Create modes at time: {:.3f} s".format(time.time() - self.start_time))
 
     @staticmethod
     def _field2ndarray_serial(fieldList: list) -> np.ndarray:
