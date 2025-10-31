@@ -70,7 +70,8 @@ class OFField:
     _dimensions: np.ndarray
     _internalField: Union[float, np.ndarray, List[np.ndarray]]
     internal_field_type: str
-    _boundaryField: Dict[Dict[str, Dict[str, Any]], List[Dict[str, Dict[str, Any]]]]
+    _boundaryField: Union[Dict[str, Dict[str, Any]], List[Dict[str, Dict[str, Any]]]]
+    _num_processors: int
 
     def __init__(
         self,
@@ -139,6 +140,7 @@ class OFField:
                 self._boundaryField,
                 self.internal_field_type,
             ) = self.readField()
+            print(f"Field {self.fieldName} read from {self.filename}")
             self._field_loaded = True
 
     # a initial constructor copy from another OFField object
@@ -302,7 +304,12 @@ class OFField:
             return self._readField(self.filename, self.data_type)
 
     @staticmethod
-    def _readField(filename: str, data_type: str, parallel: bool = False):
+    def _readField(filename: str, data_type: str, parallel: bool = False) -> Tuple[
+        np.ndarray,
+        Union[float, np.ndarray, List[np.ndarray]],
+        Union[Dict[str, Dict[str, Any]], List[Dict[str, Dict[str, Any]]]],
+        str,
+    ]:
         """
         Read the field file and parse internal and boundary fields.
 
@@ -382,7 +389,9 @@ class OFField:
 
         return _dimensions, _internalField, _boundaryField, internal_field_type
 
-    def _readField_parallel(self):
+    def _readField_parallel(
+        self,
+    ) -> Tuple[np.ndarray, List[np.ndarray], List[Dict[str, Dict[str, Any]]], str]:
         case_dir = self.caseDir
         processor_dirs = sorted(
             [d for d in os.listdir(case_dir) if d.startswith("processor")],
@@ -579,7 +588,7 @@ class OFField:
     @staticmethod
     def _process_boundary(
         lines: List[Union[str, bytes]], data_type: str, parallel: bool
-    ):
+    ) -> Union[Dict[str, Dict[str, Any]], List[Dict[str, Dict[str, Any]]]]:
         """
         Process boundaryField section and extract patch properties.
 
@@ -594,8 +603,9 @@ class OFField:
 
         Returns
         -------
-        Dict[str, Dict[str, Any]]
+        Union[Dict[str, Dict[str, Any]], List[Dict[str, Dict[str, Any]]]]
             Dictionary containing boundary field properties organized by patch names.
+            For serial cases, returns a dictionary; for parallel cases, returns a list of dictionaries.
             Each patch contains properties like 'type', 'value', etc.
 
         Raises
@@ -754,7 +764,9 @@ class OFField:
     @staticmethod
     def _num_field(
         subcontent: List[bytes],
-    ) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    ) -> Tuple[
+        Optional[int], Optional[int], Optional[int], Optional[int], Optional[str]
+    ]:
         """
         Find indices for dimensions, internalField, and boundaryField sections.
 
@@ -1064,7 +1076,7 @@ class OFField:
                 )
             )
 
-    def _writeField_wrapper(self, args):
+    def _writeField_wrapper(self, args) -> None:
         # args: (casePath, internalField, boundaryField, timeDir, fieldName)
         return self._writeField_serial(*args)
 

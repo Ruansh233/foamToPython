@@ -1,10 +1,11 @@
 import numpy as np
 import sys
 import re
+from typing import List, Tuple, Optional
 from .headerEnd import *
 
 
-def _num_list(subcontent):
+def _num_list(subcontent: List[bytes]) -> Tuple[int, int]:
     for idx, line in enumerate(subcontent):
         try:
             return int(line), idx
@@ -12,7 +13,7 @@ def _num_list(subcontent):
             continue
 
 
-def _check_data_type(data):
+def _check_data_type(data: bytes) -> str:
     data = data.decode("utf-8").strip()
     if re.match(r"^\(\s*-?\d+(\.\d+)?\s+-?\d+(\.\d+)?\s+-?\d+(\.\d+)?\s*\)$", data):
         return "vector"
@@ -24,7 +25,7 @@ def _check_data_type(data):
         sys.exit("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
 
 
-def _extractList(content, data_type):
+def _extractList(content: List[bytes], data_type: Optional[str]) -> np.ndarray:
     num_data_, data_idx = _num_list(content)
     data_start_idx = data_idx + 2
     # Extract relevant lines containing coordinates
@@ -64,7 +65,7 @@ def _extractList(content, data_type):
     return data_array
 
 
-def _extractListList(content, data_type):
+def _extractListList(content: List[bytes], data_type: str) -> np.ndarray:
     num_list_, start_idx = _num_list(content)
     # print(f"The number of list is: {num_list_}")
     subcontent = content[start_idx + 1 :]
@@ -107,7 +108,7 @@ def _extractListList(content, data_type):
     return np.array(data_list)
 
 
-def readListList(fileName, data_type):
+def readListList(fileName: str, data_type: str) -> np.ndarray:
     try:
         with open(fileName, "rb") as f:
             pass
@@ -117,7 +118,7 @@ def readListList(fileName, data_type):
         return _extractListList(f.readlines(), data_type)
 
 
-def _extractUniformList(file, data_type):
+def _extractUniformList(file: List[bytes], data_type: str) -> Tuple[int, np.ndarray]:
     for line in file:
         line = line.decode("utf-8").strip()
         if "{" in line and "}" in line:
@@ -143,7 +144,7 @@ def _extractUniformList(file, data_type):
                 sys.exit("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
 
 
-def readList(fileName, data_type, fullLength=True):
+def readList(fileName: str, data_type: str, fullLength: bool = True) -> np.ndarray:
     try:
         with open(fileName, "rb") as f:
             pass
@@ -157,12 +158,14 @@ def readList(fileName, data_type, fullLength=True):
             if fullLength:
                 return np.repeat(data, length, axis=0)
             else:
-                return data            
+                return data
         else:
             return _extractList(file_content, data_type)
 
 
-def writeList(data, data_type, fileName, object_name="None"):
+def writeList(
+    data: np.ndarray, data_type: str, fileName: str, object_name: str = "None"
+) -> None:
     """
     Write data to a file
     :param data: data to write
