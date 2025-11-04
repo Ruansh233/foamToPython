@@ -126,19 +126,17 @@ def _extractUniformList(file: List[bytes], data_type: str) -> Tuple[int, np.ndar
             length = int(length.strip())
             data = data.replace("}", "").strip()
             if data_type == "label":
-                return length, np.array([int(data)])
+                return length, np.array(int(data))
             elif data_type == "scalar":
-                return length, np.array([float(data)])
+                return length, np.array(float(data))
             elif data_type == "vector":
                 vector_values = data.strip("()").split()
                 return length, np.array(
-                    [
                         [
                             float(vector_values[0]),
                             float(vector_values[1]),
                             float(vector_values[2]),
                         ]
-                    ]
                 )
             else:
                 sys.exit("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
@@ -156,7 +154,10 @@ def readList(fileName: str, data_type: str, fullLength: bool = True) -> np.ndarr
         if file_length == 1:
             length, data = _extractUniformList(file_content, data_type)
             if fullLength:
-                return np.repeat(data, length, axis=0)
+                if data_type == "vector":
+                    return np.tile(data, (length, 1))
+                else:
+                    return np.repeat(data, length, axis=0)
             else:
                 return data
         else:
