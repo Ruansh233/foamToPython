@@ -198,13 +198,19 @@ class PODmodes:
         SystemExit
             If uniform fields are encountered or unknown data_type is used.
         """
+        if not fieldList:
+            raise ValueError("fieldList is empty.")
+            
         if fieldList[0].internal_field_type == "uniform":
             sys.exit("Uniform field is not supported yet.")
+            
         num_fields: int = len(fieldList)
-        if num_fields == 0:
-            raise ValueError("fieldList is empty.")
+        data_type: str = fieldList[0].data_type
 
-        if fieldList[0].data_type == "vector":
+        # Calculate num_data based on data type
+        if data_type == "scalar":
+            num_data: int = fieldList[0].internalField.size
+        elif data_type == "vector":
             if (
                 fieldList[0].internalField.ndim != 2
                 or fieldList[0].internalField.shape[1] != 3
@@ -212,21 +218,22 @@ class PODmodes:
                 raise ValueError(
                     "Vector field internalField must be a 2D array with shape (num_points, 3)."
                 )
+            num_data: int = fieldList[0].internalField.shape[0] * 3
+        else:
+            sys.exit("Unknown data_type. please use 'scalar' or 'vector'.")
 
-        num_data: int = (
-            fieldList[0].internalField.size
-            if fieldList[0].data_type == "scalar"
-            else fieldList[0].internalField.shape[0] * 3
-        )
+        # Preallocate matrix
         data_matrix: np.ndarray = np.zeros((num_fields, num_data))
-        for i, field in enumerate(fieldList):
-            if field.data_type == "scalar":
-                data_matrix[i, :] = field.internalField.flatten()
-            elif field.data_type == "vector":
-                # Flatten vector field by swapping axes
-                data_matrix[i, :] = field.internalField.T.flatten()
-            else:
-                sys.exit("Unknown data_type. please use 'scalar' or 'vector'.")
+        
+        # Process fields based on type (check once, not per iteration)
+        if data_type == "scalar":
+            for i, field in enumerate(fieldList):
+                # ravel() creates a view when possible, faster than flatten()
+                data_matrix[i, :] = field.internalField.ravel()
+        elif data_type == "vector":
+            for i, field in enumerate(fieldList):
+                # Use ravel() instead of flatten() for better performance
+                data_matrix[i, :] = field.internalField.T.ravel()
 
         return data_matrix
 
@@ -252,13 +259,19 @@ class PODmodes:
         SystemExit
             If uniform fields are encountered or unknown data_type is used.
         """
+        if not fieldList:
+            raise ValueError("fieldList is empty.")
+            
         if fieldList[0].internal_field_type == "uniform":
             sys.exit("Uniform field is not supported yet.")
+            
         num_fields: int = len(fieldList)
-        if num_fields == 0:
-            raise ValueError("fieldList is empty.")
+        data_type: str = fieldList[0].data_type
 
-        if fieldList[0].data_type == "vector":
+        # Calculate num_data more efficiently
+        if data_type == "scalar":
+            num_data: int = sum(field.shape[0] for field in fieldList[0].internalField)
+        elif data_type == "vector":
             if (
                 fieldList[0].internalField[0].ndim != 2
                 or fieldList[0].internalField[0].shape[1] != 3
@@ -266,23 +279,22 @@ class PODmodes:
                 raise ValueError(
                     "Vector field internalField must be a 2D array with shape (num_points, 3)."
                 )
+            num_data: int = sum(field.shape[0] for field in fieldList[0].internalField) * 3
+        else:
+            sys.exit("Unknown data_type. please use 'scalar' or 'vector'.")
 
-        num_data: int = np.sum([field.shape[0] for field in fieldList[0].internalField])
-        num_data: int = num_data if fieldList[0].data_type == "scalar" else num_data * 3
-
+        # Preallocate matrix
         data_matrix: np.ndarray = np.zeros((num_fields, num_data))
-        for i, field in enumerate(fieldList):
-            if field.data_type == "scalar":
-                data_matrix[i, :] = np.hstack(
-                    [f for f in field.internalField]
-                ).flatten()
-            elif field.data_type == "vector":
-                # Flatten vector field by swapping axes
-                data_matrix[i, :] = np.hstack(
-                    [f.T.flatten() for f in field.internalField]
-                ).flatten()
-            else:
-                sys.exit("Unknown data_type. please use 'scalar' or 'vector'.")
+        
+        # Process fields based on type (check once, not per iteration)
+        if data_type == "scalar":
+            for i, field in enumerate(fieldList):
+                # np.concatenate is faster than np.hstack for 1D arrays
+                data_matrix[i, :] = np.concatenate(field.internalField)
+        elif data_type == "vector":
+            for i, field in enumerate(fieldList):
+                # Avoid redundant .flatten() - concatenate already returns 1D
+                data_matrix[i, :] = np.concatenate([f.T.ravel() for f in field.internalField])
 
         return data_matrix
 
