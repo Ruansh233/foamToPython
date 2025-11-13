@@ -118,6 +118,20 @@ class PODmodes:
         print("Perform POD at time: {:.3f} s".format(time.time() - self.start_time))
 
         if self.fieldList[0].parallel:
+
+            if self.fieldList[0].data_type == "scalar":
+                procN_len = [
+                    self.fieldList[0].internalField[procN].shape[0]
+                    for procN in range(self._num_processors)
+                ]
+            elif self.fieldList[0].data_type == "vector":
+                procN_len = [
+                    self.fieldList[0].internalField[procN].shape[0] * 3
+                    for procN in range(self._num_processors)
+                ]
+
+            procN_idx = np.cumsum([0] + procN_len)
+
             with multiprocessing.Pool() as pool:
                 self.boundaryValues = pool.starmap(
                     self._computeBoundary,
@@ -130,19 +144,6 @@ class PODmodes:
                         for procN in range(self._num_processors)
                     ],
                 )
-
-                if self.fieldList[0].data_type == "scalar":
-                    procN_len = [
-                        self.fieldList[0].internalField[procN].shape[0]
-                        for procN in range(self._num_processors)
-                    ]
-                elif self.fieldList[0].data_type == "vector":
-                    procN_len = [
-                        self.fieldList[0].internalField[procN].shape[0] * 3
-                        for procN in range(self._num_processors)
-                    ]
-
-                procN_idx = np.cumsum([0] + procN_len)
 
                 self._modes = pool.starmap(
                     self._createModes,
@@ -200,10 +201,10 @@ class PODmodes:
         """
         if not fieldList:
             raise ValueError("fieldList is empty.")
-            
+
         if fieldList[0].internal_field_type == "uniform":
             sys.exit("Uniform field is not supported yet.")
-            
+
         num_fields: int = len(fieldList)
         data_type: str = fieldList[0].data_type
 
@@ -220,11 +221,11 @@ class PODmodes:
                 )
             num_data: int = fieldList[0].internalField.shape[0] * 3
         else:
-            sys.exit("Unknown data_type. please use 'scalar' or 'vector'.")
+            raise TypeError("Unknown data_type. please use 'scalar' or 'vector'.")
 
         # Preallocate matrix
         data_matrix: np.ndarray = np.zeros((num_fields, num_data))
-        
+
         # Process fields based on type (check once, not per iteration)
         if data_type == "scalar":
             for i, field in enumerate(fieldList):
@@ -261,10 +262,10 @@ class PODmodes:
         """
         if not fieldList:
             raise ValueError("fieldList is empty.")
-            
+
         if fieldList[0].internal_field_type == "uniform":
-            sys.exit("Uniform field is not supported yet.")
-            
+            raise SystemExit("Uniform field is not supported yet.")
+
         num_fields: int = len(fieldList)
         data_type: str = fieldList[0].data_type
 
@@ -279,13 +280,15 @@ class PODmodes:
                 raise ValueError(
                     "Vector field internalField must be a 2D array with shape (num_points, 3)."
                 )
-            num_data: int = sum(field.shape[0] for field in fieldList[0].internalField) * 3
+            num_data: int = (
+                sum(field.shape[0] for field in fieldList[0].internalField) * 3
+            )
         else:
-            sys.exit("Unknown data_type. please use 'scalar' or 'vector'.")
+            raise SystemExit("Unknown data_type. please use 'scalar' or 'vector'.")
 
         # Preallocate matrix
         data_matrix: np.ndarray = np.zeros((num_fields, num_data))
-        
+
         # Process fields based on type (check once, not per iteration)
         if data_type == "scalar":
             for i, field in enumerate(fieldList):
@@ -294,7 +297,9 @@ class PODmodes:
         elif data_type == "vector":
             for i, field in enumerate(fieldList):
                 # Avoid redundant .flatten() - concatenate already returns 1D
-                data_matrix[i, :] = np.concatenate([f.T.ravel() for f in field.internalField])
+                data_matrix[i, :] = np.concatenate(
+                    [f.T.ravel() for f in field.internalField]
+                )
 
         return data_matrix
 
@@ -542,7 +547,7 @@ class PODmodes:
             )
         if self.fieldList[0].parallel:
             tasks = [
-                (procN, j+1, mode, outputDir, fieldName)
+                (procN, j + 1, mode, outputDir, fieldName)
                 for procN, modeList in enumerate(self._modes)
                 for j, mode in enumerate(modeList[: self._rank])
             ]
@@ -550,7 +555,7 @@ class PODmodes:
                 pool.map(write_mode_worker, tasks)
         else:
             tasks = [
-                (i+1, mode, outputDir, fieldName)
+                (i + 1, mode, outputDir, fieldName)
                 for i, mode in enumerate(self._modes[: self._rank])
             ]
             with multiprocessing.Pool() as pool:
