@@ -125,9 +125,9 @@ class PODmodes:
         )
 
         self._performPOD(self.data_matrix)
-        self.truncation_error, self.projection_error = self._truncation_error()
-
         print("Perform POD at time: {:.3f} s".format(time.time() - self.start_time))
+
+        self.truncation_error, self.projection_error = self._truncation_error()
 
         if is_parallel:
             procN_idx = self._cal_procN_len(first_field, self._num_processors)
@@ -680,7 +680,7 @@ class PODmodes:
             raise ValueError("Rank is greater than the number of modes.")
 
     @staticmethod
-    def reduction(y: np.ndarray, POD_algo: str) -> tuple:
+    def reduction(y: np.ndarray, POD_algo: str, tol: float = 1e-10) -> tuple:
         """
         Perform Proper Orthogonal Decomposition (POD) on the training data using the specified method.
 
@@ -689,48 +689,93 @@ class PODmodes:
         y : np.ndarray
             The training data for which POD is to be performed. Should be a 2D array where each row is a flattened field.
         POD_algo : str
-            The algorithm to use ('svd' or 'eigen').
+            The algorithm to use ('svd', 'eigen', or 'auto').
+            - 'svd': Use Singular Value Decomposition (best for N >> M)
+            - 'eigen': Use eigenvalue decomposition of correlation matrix (best for N << M)
+            - 'auto': Automatically choose based on matrix dimensions
+        tol : float, optional
+            Tolerance for filtering out small singular values/eigenvalues to improve numerical stability.
+            Default is 1e-10.
 
         Returns
         -------
         cellModes : np.ndarray
-            The POD modes.
+            The POD modes (spatial modes).
         s_all : np.ndarray
-            The singular values or eigenvalues.
+            The singular values (non-negative, sorted in descending order).
         _coeffs : np.ndarray
-            The coefficients of the POD modes.
+            The temporal coefficients of the POD modes.
 
         Raises
         ------
         ValueError
-            If POD_algo is not 'svd' or 'eigen'.
+            If POD_algo is not 'svd', 'eigen', or 'auto', or if input dimensions are invalid.
         """
+        # Validate input
+        if y.ndim != 2:
+            raise ValueError(f"Input must be a 2D array, got {y.ndim}D array.")
+        
+        N, M = y.shape
+        
+        if N == 0 or M == 0:
+            raise ValueError(f"Input array has invalid shape: ({N}, {M}).")
+        
+        # Auto-select algorithm based on matrix dimensions
+        if POD_algo == "auto":
+            # Use eigenvalue method when snapshots << spatial points (more efficient)
+            POD_algo = "eigen" if N < M else "svd"
+            print(f"Auto-selected POD algorithm: {POD_algo} (N={N}, M={M})")
+        
         if POD_algo == "svd":
-            # SVD-based POD
+            # SVD-based POD (direct method)
+            # Recommended when N >= M (many snapshots or comparable to spatial points)
             u, s_all, cellModes = svd(y, full_matrices=False)
-            _coeffs = u @ np.diag(s_all)
-            print(f"POD_SVD reduction completed.")
+            
+            # Use broadcasting instead of np.diag for efficiency
+            _coeffs = u * s_all  # Broadcasting: (N, N) * (N,) -> (N, N)
+            
+            print(f"POD_SVD reduction completed (computed {len(s_all)} modes).")
+            
         elif POD_algo == "eigen":
-            # Eigenvalue-based POD
-            N, M = y.shape
-
+            # Eigenvalue-based POD (snapshot method / method of snapshots)
+            # Recommended when N << M (few snapshots, many spatial points)
+            # More efficient as it works with NxN correlation matrix instead of MxM
+            
+            # Compute correlation matrix C = Y * Y^T (N x N instead of M x M)
             C: np.ndarray = y @ y.T
+            
+            # Use eigh for symmetric matrix (faster and more stable than eig)
             eigenvalues, U = np.linalg.eigh(C)
-
+            
+            # Sort in descending order
             sorted_indices = np.argsort(eigenvalues)[::-1]
             sorted_eigenvalues = eigenvalues[sorted_indices]
             U = U[:, sorted_indices]
-
-            s_all = np.sqrt(sorted_eigenvalues)
-            _coeffs = U @ np.diag(s_all)
-
-            cellModes = np.zeros((N, M))
-            for i in range(N):
-                u_i = U[:, i]
-                cellModes[i, :] = (1 / s_all[i]) * (u_i.T @ y)
-            print("POD_eigen reduction completed.")
+            
+            # Filter out negative eigenvalues from numerical errors
+            positive_mask = sorted_eigenvalues > tol
+            if not np.all(positive_mask):
+                num_filtered = np.sum(~positive_mask)
+                print(f"Warning: Filtered {num_filtered} near-zero/negative eigenvalues (< {tol}).")
+                sorted_eigenvalues = sorted_eigenvalues[positive_mask]
+                U = U[:, positive_mask]
+            
+            # Compute singular values from eigenvalues
+            s_all = np.sqrt(np.maximum(sorted_eigenvalues, 0))  # Ensure non-negative
+            
+            # Use broadcasting for coefficients (more efficient than np.diag)
+            _coeffs = U * s_all  # Broadcasting: (N, k) * (k,) -> (N, k)
+            
+            # Vectorized computation of spatial modes (instead of loop)
+            # cellModes[i, :] = (1 / s_all[i]) * (U[:, i]^T @ y)
+            # This is equivalent to: cellModes = diag(1/s_all) @ U^T @ y
+            # Using broadcasting: (U^T @ y) / s_all[:, None]
+            cellModes = (U.T @ y) / s_all[:, np.newaxis]
+            
+            print(f"POD_eigen reduction completed (computed {len(s_all)} modes).")
+            
         else:
-            raise ValueError("POD_algo must be 'svd' or 'eigen'.")
+            raise ValueError("POD_algo must be 'svd', 'eigen', or 'auto'.")
 
         return cellModes, s_all, _coeffs
 

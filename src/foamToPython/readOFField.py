@@ -803,21 +803,21 @@ class OFField:
         data_idx = None
         boundary_idx = None
         internal_field_type = None
-        
+
         # Flag to track if we need to find data size
         searching_for_data_size = False
-        
+
         idx = 0
         n_lines = len(subcontent)
 
         while idx < n_lines:
             line = subcontent[idx]
-            
+
             # Search for dimensions (should appear early in file)
             if dim_idx is None and b"dimensions" in line:
                 dim_idx = idx
                 continue
-            
+
             # Search for internalField declaration
             if internal_field_type is None and b"internalField" in line:
                 if b"nonuniform" in line:
@@ -835,11 +835,11 @@ class OFField:
                     internal_field_type = "uniform"
                     data_idx = idx
                     data_size = None
-            
+
             # Search for data size (line after nonuniform declaration)
             elif searching_for_data_size:
                 stripped_line = line.strip()
-                if stripped_line and not stripped_line.startswith(b'//'):
+                if stripped_line and not stripped_line.startswith(b"//"):
                     try:
                         data_size = int(stripped_line)
                         data_idx = idx
@@ -852,25 +852,25 @@ class OFField:
                     except ValueError:
                         # Not a valid integer, continue searching
                         pass
-            
+
             # Search for boundaryField (should appear after internalField)
             if b"boundaryField" in line:
                 boundary_idx = idx
                 # Found all required information, exit early
                 break
-            
+
             idx += 1
 
         # Validation
         if internal_field_type is None:
             raise ValueError("internalField not found in the file.")
-        
+
         if dim_idx is None:
             raise ValueError("dimensions not found in the file.")
-        
+
         if boundary_idx is None:
             raise ValueError("boundaryField not found in the file.")
-        
+
         return data_idx, boundary_idx, dim_idx, data_size, internal_field_type
 
     def writeField(
@@ -878,6 +878,7 @@ class OFField:
         casePath: str,
         timeDir: int,
         fieldName: str,
+        precision: int = 10,
     ) -> None:
         """
         Write field data to a file in OpenFOAM format.
@@ -901,7 +902,9 @@ class OFField:
         parallel attribute of the object.
         """
         if self.parallel:
-            self._writeField_parallel(casePath, timeDir=timeDir, fieldName=fieldName)
+            self._writeField_parallel(
+                casePath, timeDir=timeDir, fieldName=fieldName, precision=precision
+            )
         else:
             self._writeField_serial(
                 casePath,
@@ -909,6 +912,7 @@ class OFField:
                 boundaryField=self.boundaryField,
                 timeDir=timeDir,
                 fieldName=fieldName,
+                precision=precision,
             )
 
     def _writeField_serial(
@@ -918,6 +922,7 @@ class OFField:
         boundaryField: Dict[str, Dict[str, Any]],
         timeDir: int,
         fieldName: str,
+        precision: int = 10,
     ) -> None:
         """
         Write field data to a file in OpenFOAM format (serial version).
@@ -969,13 +974,13 @@ class OFField:
             # write internalField for scalar or vector
             if self.data_type == "scalar":
                 if self.internal_field_type == "uniform":
-                    f.write(f"internalField   uniform {internalField:.8g};\n\n")
+                    f.write(f"internalField   uniform {internalField:.{precision}g};\n\n")
                 elif self.internal_field_type == "nonuniform":
                     f.write(f"internalField   nonuniform List<scalar>\n")
                     f.write(f"{internalField.shape[0]}\n")
                     f.write("(\n")
                     for point in internalField:
-                        f.write(f"{point:.8g}\n")
+                        f.write(f"{point:.{precision}g}\n")
                     f.write(")\n;\n")
                 else:
                     raise ValueError(
@@ -984,14 +989,14 @@ class OFField:
             elif self.data_type == "vector":
                 if self.internal_field_type == "uniform":
                     f.write(
-                        f"internalField   uniform ({internalField[0]:.8g} {internalField[1]:.8g} {internalField[2]:.8g});\n\n"
+                        f"internalField   uniform ({internalField[0]:.{precision}g} {internalField[1]:.{precision}g} {internalField[2]:.{precision}g});\n\n"
                     )
                 elif self.internal_field_type == "nonuniform":
                     f.write(f"internalField   nonuniform List<vector>\n")
                     f.write(f"{internalField.shape[0]}\n")
                     f.write("(\n")
                     for point in internalField:
-                        f.write(f"({point[0]:.8g} {point[1]:.8g} {point[2]:.8g})\n")
+                        f.write(f"({point[0]:.{precision}g} {point[1]:.{precision}g} {point[2]:.{precision}g})\n")
                     f.write(")\n;\n")
                 else:
                     raise ValueError(
@@ -1008,11 +1013,11 @@ class OFField:
                     if isinstance(value, np.ndarray):
                         if value.ndim == 0:
                             # scalar
-                            f.write(f"        {key} uniform {value:.8g};\n")
+                            f.write(f"        {key} uniform {value:.{precision}g};\n")
                         elif value.ndim == 1 and value.shape[0] == 3:
                             # vector
                             f.write(
-                                f"        {key} uniform ({value[0]:.8g} {value[1]:.8g} {value[2]:.8g});\n"
+                                f"        {key} uniform ({value[0]:.{precision}g} {value[1]:.{precision}g} {value[2]:.{precision}g});\n"
                             )
                         elif value.ndim == 1:
                             # scalar list
@@ -1020,7 +1025,7 @@ class OFField:
                             f.write(f"{value.shape[0]}\n")
                             f.write("(\n")
                             for v in value:
-                                f.write(f"{v:.8g}\n")
+                                f.write(f"{v:.{precision}g}\n")
                             f.write(");\n")
                         elif (
                             value.ndim == 2
@@ -1032,7 +1037,7 @@ class OFField:
                             f.write(f"{value.shape[1]}\n")
                             f.write("(\n")
                             for v in value.T:
-                                f.write(f"{v:.8g}\n")
+                                f.write(f"{v:.{precision}g}\n")
                             f.write(");\n")
                         elif (
                             value.ndim == 2
@@ -1041,7 +1046,7 @@ class OFField:
                         ):
                             # a single vector in 2D array
                             f.write(
-                                f"        {key} uniform ({value[0,0]:.8g} {value[0,1]:.8g} {value[0,2]:.8g});\n"
+                                f"        {key} uniform ({value[0,0]:.{precision}g} {value[0,1]:.{precision}g} {value[0,2]:.{precision}g});\n"
                             )
                         elif value.ndim == 2 and value.shape[1] == 3:
                             # vector list
@@ -1049,7 +1054,7 @@ class OFField:
                             f.write(f"{value.shape[0]}\n")
                             f.write("(\n")
                             for v in value:
-                                f.write(f"({v[0]:.8g} {v[1]:.8g} {v[2]:.8g})\n")
+                                f.write(f"({v[0]:.{precision}g} {v[1]:.{precision}g} {v[2]:.{precision}g})\n")
                             f.write(");\n")
                     else:
                         # assume it's a string or other simple type
