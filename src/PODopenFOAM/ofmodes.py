@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 import multiprocessing
 
 import numpy as np
-from scipy.linalg import svd
+from scipy.linalg import svd, lu_factor, lu_solve, LinAlgError
 
 from foamToPython.readOFField import OFField
 
@@ -27,7 +27,7 @@ class PODmodes:
 
         Parameters
         ----------
-        fieldList : list
+        fieldList : List[OFField]
             List of OpenFOAM field objects.
         POD_algo : str, optional
             Algorithm for POD ('eigen' or 'svd'), by default 'eigen'.
@@ -41,7 +41,7 @@ class PODmodes:
         ValueError
             If rank is greater than the number of fields.
         """
-        self.fieldList: list = fieldList
+        self.fieldList: List[OFField] = fieldList
         self.POD_algo: str = POD_algo
         if rank > len(fieldList):
             raise ValueError("Rank cannot be greater than the number of fields.")
@@ -56,6 +56,9 @@ class PODmodes:
         self.run: bool = run
         if self.run:
             self.getModes()
+
+        if fieldList[0].data_type != "scalar" and fieldList[0].data_type != "vector":
+            raise TypeError("Unknown data_type. please use 'scalar' or 'vector'.")
 
     @property
     def rank(self):
@@ -96,8 +99,13 @@ class PODmodes:
         ValueError
             If POD has not been performed yet or if fieldList is empty.
         """
+        # Cache frequently accessed properties
+        first_field = self.fieldList[0]
+        is_parallel = first_field.parallel
+        data_type = first_field.data_type
+
         if not hasattr(self, "data_matrix"):
-            if self.fieldList[0].parallel:
+            if is_parallel:
                 self.data_matrix: np.ndarray = self._field2ndarray_parallel(
                     self.fieldList
                 )
@@ -117,65 +125,100 @@ class PODmodes:
 
         print("Perform POD at time: {:.3f} s".format(time.time() - self.start_time))
 
-        if self.fieldList[0].parallel:
+        if is_parallel:
+            procN_idx = self._cal_procN_len(first_field, self._num_processors)
+            boundary_field = first_field.boundaryField
+            dimensions = first_field.dimensions
 
-            if self.fieldList[0].data_type == "scalar":
-                procN_len = [
-                    self.fieldList[0].internalField[procN].shape[0]
-                    for procN in range(self._num_processors)
-                ]
-            elif self.fieldList[0].data_type == "vector":
-                procN_len = [
-                    self.fieldList[0].internalField[procN].shape[0] * 3
-                    for procN in range(self._num_processors)
-                ]
+            # Pre-slice cellModes for each processor to avoid repeated slicing
+            cell_modes_slices = [
+                self.cellModes[:, procN_idx[procN] : procN_idx[procN + 1]]
+                for procN in range(self._num_processors)
+            ]
 
-            procN_idx = np.cumsum([0] + procN_len)
-
+            # Use single pool for both boundary and mode computations
             with multiprocessing.Pool() as pool:
+                # Prepare boundary computation tasks
+                boundary_tasks = [
+                    (
+                        [f.boundaryField[procN] for f in self.fieldList],
+                        self._coeffs,
+                        data_type,
+                    )
+                    for procN in range(self._num_processors)
+                ]
                 self.boundaryValues = pool.starmap(
-                    self._computeBoundary,
-                    [
-                        (
-                            [f.boundaryField[procN] for f in self.fieldList],
-                            self._coeffs,
-                            self.fieldList[0].data_type,
-                        )
-                        for procN in range(self._num_processors)
-                    ],
+                    self._computeBoundary, boundary_tasks
                 )
 
-                self._modes = pool.starmap(
-                    self._createModes,
-                    [
-                        (
-                            self.fieldList[0].boundaryField[procN],
-                            self.cellModes[:, procN_idx[procN] : procN_idx[procN + 1]],
-                            self.boundaryValues[procN],
-                            self.fieldList[0].data_type,
-                            self.fieldList[0].dimensions,
-                            self.fieldList[0].parallel,
-                        )
-                        for procN in range(self._num_processors)
-                    ],
+                print(
+                    "Compute boundary values at time: {:.3f} s".format(
+                        time.time() - self.start_time
+                    )
                 )
+
+                # Prepare mode creation tasks
+                mode_tasks = [
+                    (
+                        boundary_field[procN],
+                        cell_modes_slices[procN],
+                        self.boundaryValues[procN],
+                        data_type,
+                        dimensions,
+                        is_parallel,
+                    )
+                    for procN in range(self._num_processors)
+                ]
+                self._modes = pool.starmap(self._createModes, mode_tasks)
         else:
             self.boundaryValues = self._computeBoundary(
                 [f.boundaryField for f in self.fieldList],
                 self._coeffs,
-                self.fieldList[0].data_type,
+                data_type,
+            )
+
+            print(
+                "Compute boundary values at time: {:.3f} s".format(
+                    time.time() - self.start_time
+                )
             )
 
             self._modes = self._createModes(
-                self.fieldList[0].boundaryField,
+                first_field.boundaryField,
                 self.cellModes,
                 self.boundaryValues,
-                self.fieldList[0].data_type,
-                self.fieldList[0].dimensions,
-                self.fieldList[0].parallel,
+                data_type,
+                first_field.dimensions,
+                is_parallel,
             )
 
         print("Create modes at time: {:.3f} s".format(time.time() - self.start_time))
+
+    @staticmethod
+    def _cal_procN_len(field, num_processors) -> np.ndarray:
+        """
+        Calculate the number of data points in each processor for parallel fields.
+
+        Parameters
+        ----------
+        field : OFField
+            An OpenFOAM field object.
+        Returns
+        -------
+        List[int]
+            A list containing the number of data points in each processor.
+        """
+        if field.data_type == "scalar":
+            procN_len = [
+                field.internalField[procN].shape[0] for procN in range(num_processors)
+            ]
+        elif field.data_type == "vector":
+            procN_len = [
+                field.internalField[procN].shape[0] * 3
+                for procN in range(num_processors)
+            ]
+
+        return np.cumsum([0] + procN_len)
 
     @staticmethod
     def _field2ndarray_serial(fieldList: list) -> np.ndarray:
@@ -327,105 +370,135 @@ class PODmodes:
         Raises
         ------
         ValueError
-            If boundary field value type is unknown.
+            If boundary field value type is unknown or coeffs matrix is singular.
         """
+        supported_types = ("fixedValue", "fixedGradient", "processor", "calculated")
         boundaryValues: dict = {}
-        for patch in boundaryFields[0].keys():
-            if (
-                boundaryFields[0][patch]["type"] == "fixedValue"
-                or boundaryFields[0][patch]["type"] == "fixedGradient"
-                or boundaryFields[0][patch]["type"] == "processor"
-                or boundaryFields[0][patch]["type"] == "calculated"
-            ):
-                value_type = list(boundaryFields[0][patch].keys())[-1]
-                if isinstance(boundaryFields[0][patch][value_type], str):
-                    continue
-                elif isinstance(boundaryFields[0][patch][value_type], np.ndarray):
-                    # loop over all boundaryFields to get the value_len
-                    value_len = 0
-                    uniform_indices = []
-                    patch_value_type = None
-                    for i, field in enumerate(boundaryFields):
-                        if (
-                            data_type == "scalar"
-                            and boundaryFields[i][patch][value_type].size == 1
-                        ):
-                            uniform_indices.append(i)
-                        if (
-                            data_type == "vector"
-                            and boundaryFields[i][patch][value_type].ndim == 1
-                        ):
-                            uniform_indices.append(i)
 
-                    if len(uniform_indices) == len(boundaryFields):
-                        patch_value_type = "uniform"
-                        if data_type == "scalar":
-                            value_len = 1
-                        elif data_type == "vector":
-                            value_len = 3
-                    elif len(uniform_indices) == 0:
-                        patch_value_type = "nonuniform"
-                        value_len = boundaryFields[0][patch][value_type].size
+        # Pre-compute inverse once (with error handling)
+        try:
+            coeffs_inv = np.linalg.inv(coeffs)
+        except np.linalg.LinAlgError:
+            raise ValueError("Coefficient matrix is singular and cannot be inverted.")
+
+        num_fields = len(boundaryFields)
+        first_boundary = boundaryFields[0]
+
+        for patch in first_boundary.keys():
+            patch_dict = first_boundary[patch]
+
+            # Skip unsupported types
+            if patch_dict["type"] not in supported_types:
+                continue
+
+            value_type = next((key for key in patch_dict.keys() if key != "type"), None)
+            if value_type is None:
+                continue
+            first_value = patch_dict[value_type]
+
+            # Skip string values
+            if isinstance(first_value, str):
+                continue
+
+            # Process only numpy arrays
+            if not isinstance(first_value, np.ndarray):
+                continue
+
+            # Get value length and type info
+            value_len, patch_value_type, uniform_indices = PODmodes._get_value_len(
+                boundaryFields, patch, value_type, data_type
+            )
+
+            # Pre-allocate the boundary values array
+            if data_type == "scalar":
+                boundaryValues[patch] = np.zeros((num_fields, value_len))
+                # NumPy broadcasting handles both scalar and array assignments
+                for i, field in enumerate(boundaryFields):
+                    boundaryValues[patch][i, :] = field[patch][value_type]
+
+            elif data_type == "vector":
+                boundaryValues[patch] = np.zeros((num_fields, value_len))
+                uniform_set = set(uniform_indices)
+
+                for i, field in enumerate(boundaryFields):
+                    field_value = field[patch][value_type]
+                    if i in uniform_set:
+                        # Uniform: 1D array (3,) - tile if needed for mixed, else assign directly
+                        if patch_value_type == "uniform":
+                            boundaryValues[patch][i, :] = field_value
+                        else:  # mixed case
+                            boundaryValues[patch][i, :] = np.tile(
+                                field_value, (value_len // 3, 1)
+                            ).T.ravel()
                     else:
-                        patch_value_type = "mixed"
-                        one_index = list(
-                            set(range(len(boundaryFields))) - set(uniform_indices)
-                        )
-                        value_len = boundaryFields[one_index[0]][patch][value_type].size
+                        # Non-uniform: 2D array (n, 3) - transpose and ravel
+                        boundaryValues[patch][i, :] = field_value.T.ravel()
 
-                if data_type == "scalar":
-                    if (
-                        patch_value_type == "uniform"
-                        or patch_value_type == "nonuniform"
-                    ):
-                        boundaryValues[patch] = np.zeros(
-                            (len(boundaryFields), value_len)
-                        )
-                        for i, field in enumerate(boundaryFields):
-                            boundaryValues[patch][i, :] = field[patch][value_type]
-                    elif patch_value_type == "mixed":
-                        boundaryValues[patch] = np.zeros(
-                            (len(boundaryFields), value_len)
-                        )
-                        for i, field in enumerate(boundaryFields):
-                            if i in uniform_indices:
-                                boundaryValues[patch][i, :] = np.full(
-                                    (value_len,), field[patch][value_type]
-                                )
-                            else:
-                                boundaryValues[patch][i, :] = field[patch][value_type]
-
-                elif data_type == "vector":
-                    if patch_value_type == "uniform":
-                        boundaryValues[patch] = np.zeros((len(boundaryFields), 3))
-                        for i, field in enumerate(boundaryFields):
-                            boundaryValues[patch][i, :] = field[patch][value_type]
-                    elif patch_value_type == "nonuniform":
-                        boundaryValues[patch] = np.zeros(
-                            (len(boundaryFields), value_len)
-                        )
-                        for i, field in enumerate(boundaryFields):
-                            boundaryValues[patch][i, :] = field[patch][
-                                value_type
-                            ].T.flatten()
-                    elif patch_value_type == "mixed":
-                        boundaryValues[patch] = np.zeros(
-                            (len(boundaryFields), value_len)
-                        )
-                        for i, field in enumerate(boundaryFields):
-                            if i in uniform_indices:
-                                boundaryValues[patch][i, :] = np.tile(
-                                    field[patch][value_type], value_len // 3
-                                ).T.flatten()
-                            else:
-                                boundaryValues[patch][i, :] = field[patch][
-                                    value_type
-                                ].T.flatten()
-
-                # The mode equals self.coeffs.inverse() @ self.boundaryModes[patch]
-                boundaryValues[patch] = np.linalg.inv(coeffs) @ boundaryValues[patch]
+            # Apply coefficient inverse transformation
+            boundaryValues[patch] = coeffs_inv @ boundaryValues[patch]
 
         return boundaryValues
+
+    @staticmethod
+    def _get_value_len(
+        boundaryFields: list, patch: str, value_type: str, data_type: str
+    ) -> Tuple[str, int, list]:
+        """
+        Determine the value length and type for a boundary patch.
+
+        Parameters
+        ----------
+        boundaryFields : list
+            List of boundary field dictionaries.
+        patch : str
+            The patch name.
+        value_type : str
+            The value type (e.g., 'value', 'gradient').
+        data_type : str
+            The data type ('scalar' or 'vector').
+
+        Returns
+        -------
+        tuple
+            (patch_value_type, value_len, uniform_indices)
+            - patch_value_type: 'uniform', 'nonuniform', or 'mixed'
+            - value_len: Length of the value array
+            - uniform_indices: List of indices with uniform values
+        """
+        uniform_indices = []
+
+        # Single pass through boundary fields to identify uniform values
+        for i, field in enumerate(boundaryFields):
+            field_value = field[patch][value_type]
+            if data_type == "scalar":
+                if field_value.size == 1:
+                    uniform_indices.append(i)
+            elif data_type == "vector":
+                if field_value.ndim == 1:
+                    uniform_indices.append(i)
+
+        num_uniform = len(uniform_indices)
+        num_total = len(boundaryFields)
+
+        # Determine patch type and value length
+        if num_uniform == num_total:
+            # All uniform
+            patch_value_type = "uniform"
+            value_len = 1 if data_type == "scalar" else 3
+        elif num_uniform == 0:
+            # All non-uniform
+            patch_value_type = "nonuniform"
+            value_len = boundaryFields[0][patch][value_type].size
+        else:
+            # Mixed: some uniform, some non-uniform
+            patch_value_type = "mixed"
+            # Find first non-uniform index to get correct size
+            non_uniform_idx = next(
+                i for i in range(num_total) if i not in uniform_indices
+            )
+            value_len = boundaryFields[non_uniform_idx][patch][value_type].size
+
+        return value_len, patch_value_type, uniform_indices
 
     @staticmethod
     def _createModes(
@@ -466,7 +539,11 @@ class PODmodes:
         """
         _modes = []
         internal_field_type = "nonuniform"
-        for i in range(0, cellModes.shape[0]):
+        supported_types = {"fixedValue", "fixedGradient", "processor", "calculated"}
+
+        num_modes = cellModes.shape[0]
+
+        for i in range(num_modes):
             mode = OFField()
             mode.data_type = data_type
             mode.dimensions = dimensions
@@ -474,28 +551,40 @@ class PODmodes:
             mode._field_loaded = True
             mode.parallel = parallel
 
+            # Set internal field based on data type
             if data_type == "scalar":
                 mode.internalField = cellModes[i, :]
             elif data_type == "vector":
-                num_points: int = cellModes[i, :].shape[0] // 3
+                num_points = cellModes.shape[1] // 3
                 mode.internalField = cellModes[i, :].reshape((3, num_points)).T
 
+            # Process boundary fields
             mode.boundaryField = {}
-            for patch in bField.keys():
-                mode.boundaryField[patch] = {}
-                if (
-                    bField[patch]["type"] == "fixedValue"
-                    or bField[patch]["type"] == "fixedGradient"
-                    or bField[patch]["type"] == "processor"
-                    or bField[patch]["type"] == "calculated"
-                ):
-                    mode.boundaryField[patch]["type"] = bField[patch]["type"]
-                    value_type = list(bField[patch].keys())[-1]
-                    if isinstance(bField[patch][value_type], str):
-                        mode.boundaryField[patch][value_type] = bField[patch][
-                            value_type
-                        ]
-                    elif isinstance(bField[patch][value_type], np.ndarray):
+            for patch, patch_dict in bField.items():
+                patch_type = patch_dict["type"]
+                mode.boundaryField[patch] = {"type": patch_type}
+
+                # Handle supported boundary types
+                if patch_type in supported_types:
+                    # Get value type (last key that's not 'type')
+                    value_type = next(
+                        (k for k in reversed(patch_dict.keys()) if k != "type"), None
+                    )
+
+                    if value_type is None:
+                        continue
+
+                    patch_value = patch_dict[value_type]
+
+                    # Handle string values (e.g., "uniform (0 0 0)")
+                    if isinstance(patch_value, str):
+                        mode.boundaryField[patch][value_type] = patch_value
+
+                    # Handle numpy array values
+                    elif isinstance(patch_value, np.ndarray):
+                        if patch not in boundaryValues:
+                            continue
+
                         if data_type == "scalar":
                             mode.boundaryField[patch][value_type] = boundaryValues[
                                 patch
@@ -506,15 +595,15 @@ class PODmodes:
                             )
                     else:
                         raise ValueError(
-                            "Unknown boundary field value type for fixedValue, fixedGradient, or processor."
+                            f"Unknown boundary field value type for patch '{patch}'. "
+                            f"Expected str or np.ndarray, got {type(patch_value)}."
                         )
-                elif len(bField[patch].keys()) == 1:
-                    mode.boundaryField[patch]["type"] = bField[patch]["type"]
-                else:
+
+                elif len(patch_dict) > 1:
+                    # Patch has additional keys beyond 'type' but isn't a supported type
                     raise ValueError(
-                        """Unknown boundary field value type for patch with single type.
-                        Supported types are fixedValue, fixedGradient, processor, calculated.
-                        or patch only with type."""
+                        f"Unsupported boundary type '{patch_type}' for patch '{patch}' with additional fields. "
+                        f"Supported types are: {', '.join(supported_types)}."
                     )
 
             _modes.append(mode)
@@ -741,7 +830,7 @@ class PODmodes:
         Raises
         ------
         ValueError
-            If rank is greater than the number of modes.
+            If rank is greater than the number of modes or coeffs is not 1D.
         """
         rank = coeffs.shape[0]
         if rank > len(_modes[0]):
@@ -749,38 +838,47 @@ class PODmodes:
         if coeffs.ndim != 1:
             raise ValueError("Coefficients should be a 1D array.")
 
+        # Define supported boundary types
+        supported_types = {"fixedValue", "fixedGradient", "processor", "calculated"}
+
         recOFFieldList = []
         for procN in range(_num_processors):
-            # Reconstruct internal field
+            # Initialize reconstructed field
             recOFField = OFField.from_OFField(_modes[procN][0])
             recOFField.internalField = np.zeros(_modes[procN][0].internalField.shape)
+
+            # Reconstruct internal field using vectorized operation
             for i in range(rank):
                 recOFField.internalField += coeffs[i] * _modes[procN][i].internalField
 
             # Reconstruct boundary field
-            for patch in _modes[procN][0].boundaryField.keys():
-                patch_type = _modes[procN][0].boundaryField[patch]["type"]
-                if (
-                    patch_type == "fixedValue"
-                    or patch_type == "fixedGradient"
-                    or patch_type == "processor"
-                    or patch_type == "calculated"
-                ):
-                    value_type = list(_modes[procN][0].boundaryField[patch].keys())[-1]
-                    if isinstance(
-                        _modes[procN][0].boundaryField[patch][value_type],
-                        str,
-                    ):
-                        recOFField.boundaryField[patch][value_type] = _modes[procN][
-                            0
-                        ].boundaryField[patch][value_type]
-                    elif isinstance(
-                        _modes[procN][0].boundaryField[patch][value_type],
-                        np.ndarray,
-                    ):
+            first_boundary = _modes[procN][0].boundaryField
+            for patch, patch_dict in first_boundary.items():
+                patch_type = patch_dict["type"]
+
+                if patch_type in supported_types:
+                    # Get value type (last key that's not 'type')
+                    value_type = next(
+                        (k for k in reversed(patch_dict.keys()) if k != "type"), None
+                    )
+
+                    if value_type is None:
+                        continue
+
+                    patch_value = patch_dict[value_type]
+
+                    # Handle string values (e.g., "uniform (0 0 0)")
+                    if isinstance(patch_value, str):
+                        recOFField.boundaryField[patch][value_type] = patch_value
+
+                    # Handle numpy array values
+                    elif isinstance(patch_value, np.ndarray):
+                        # Initialize with zeros
                         recOFField.boundaryField[patch][value_type] = np.zeros(
-                            _modes[procN][0].boundaryField[patch][value_type].shape
+                            patch_value.shape
                         )
+
+                        # Accumulate contributions from all modes
                         for i in range(rank):
                             recOFField.boundaryField[patch][value_type] += (
                                 coeffs[i]
@@ -788,12 +886,12 @@ class PODmodes:
                             )
                     else:
                         raise ValueError(
-                            "Unknown boundary field value type for fixedValue, fixedGradient, or processor."
+                            f"Unknown boundary field value type for patch '{patch}'. "
+                            f"Expected str or np.ndarray, got {type(patch_value)}."
                         )
                 else:
-                    recOFField.boundaryField[patch]["type"] = _modes[procN][
-                        0
-                    ].boundaryField[patch]["type"]
+                    # For unsupported types, just copy the type
+                    recOFField.boundaryField[patch]["type"] = patch_type
 
             recOFFieldList.append(recOFField)
         return recOFFieldList
@@ -818,48 +916,65 @@ class PODmodes:
         Raises
         ------
         ValueError
-            If rank is greater than the number of modes.
+            If rank is greater than the number of modes or coeffs is not 1D.
         """
         rank = coeffs.shape[0]
-        if rank != len(_modes):
-            raise ValueError("Rank must match the number of modes.")
+        if rank > len(_modes):
+            raise ValueError("Rank cannot be greater than the number of modes.")
         if coeffs.ndim != 1:
             raise ValueError("Coefficients should be a 1D array.")
 
+        # Initialize reconstructed field
         recOFField = OFField.from_OFField(_modes[0])
         recOFField.internalField = np.zeros(_modes[0].internalField.shape)
+
+        # Reconstruct internal field using vectorized operation
         for i in range(rank):
             recOFField.internalField += coeffs[i] * _modes[i].internalField
 
+        # Define supported boundary types
+        supported_types = {"fixedValue", "fixedGradient", "calculated"}
+
         # Reconstruct boundary field
-        for patch in _modes[0].boundaryField.keys():
-            patch_type = _modes[0].boundaryField[patch]["type"]
-            if (
-                patch_type == "fixedValue"
-                or patch_type == "fixedGradient"
-                or patch_type == "calculated"
-            ):
-                value_type = list(_modes[0].boundaryField[patch].keys())[-1]
-                if isinstance(_modes[0].boundaryField[patch][value_type], str):
-                    recOFField.boundaryField[patch][value_type] = _modes[
-                        0
-                    ].boundaryField[patch][value_type]
-                elif isinstance(_modes[0].boundaryField[patch][value_type], np.ndarray):
+        first_boundary = _modes[0].boundaryField
+        for patch, patch_dict in first_boundary.items():
+            patch_type = patch_dict["type"]
+
+            if patch_type in supported_types:
+                # Get value type (last key that's not 'type')
+                value_type = next(
+                    (k for k in reversed(patch_dict.keys()) if k != "type"), None
+                )
+
+                if value_type is None:
+                    continue
+
+                patch_value = patch_dict[value_type]
+
+                # Handle string values (e.g., "uniform (0 0 0)")
+                if isinstance(patch_value, str):
+                    recOFField.boundaryField[patch][value_type] = patch_value
+
+                # Handle numpy array values
+                elif isinstance(patch_value, np.ndarray):
+                    # Initialize with zeros
                     recOFField.boundaryField[patch][value_type] = np.zeros(
-                        _modes[0].boundaryField[patch][value_type].shape
+                        patch_value.shape
                     )
+
+                    # Accumulate contributions from all modes
                     for i in range(rank):
                         recOFField.boundaryField[patch][value_type] += (
                             coeffs[i] * _modes[i].boundaryField[patch][value_type]
                         )
                 else:
                     raise ValueError(
-                        "Unknown boundary field value type for fixedValue, fixedGradient, or calculated."
+                        f"Unknown boundary field value type for patch '{patch}'. "
+                        f"Expected str or np.ndarray, got {type(patch_value)}."
                     )
             else:
-                recOFField.boundaryField[patch]["type"] = _modes[0].boundaryField[
-                    patch
-                ]["type"]
+                # For unsupported types, just copy the type
+                recOFField.boundaryField[patch]["type"] = patch_type
 
         return recOFField
 
@@ -917,6 +1032,91 @@ class PODmodes:
                     "For non-parallel fields, recOFFields should be a single OFField object."
                 )
             recOFField.writeField(outputDir, timeDir, fieldName)
+
+    @staticmethod
+    def _convert_mode_list(mode_list: List[List[OFField]]) -> List[OFField]:
+        """
+        Convert processor-wise mode list to mode-wise list for parallel fields.
+
+        Transforms mode_list[processor][mode] structure into a list where each mode
+        contains data from all processors, enabling parallel field reconstruction.
+
+        Parameters
+        ----------
+        mode_list : List[List[OFField]]
+            Nested list where mode_list[procN][modeN] contains the mode data for
+            processor procN and mode modeN. All sublists must have the same length.
+
+        Returns
+        -------
+        List[OFField]
+            List of merged OFField objects, where each mode aggregates data from
+            all processors with parallel=True flag set.
+
+        Raises
+        ------
+        ValueError
+            If mode_list is empty or sublists have inconsistent lengths.
+        TypeError
+            If mode_list structure is invalid or contains non-OFField objects.
+
+        Examples
+        --------
+        >>> # mode_list[0] = [mode0_proc0, mode1_proc0]
+        >>> # mode_list[1] = [mode0_proc1, mode1_proc1]
+        >>> converted = _convert_mode_list(mode_list)
+        >>> # converted[0] contains mode0 data from all processors
+        >>> # converted[1] contains mode1 data from all processors
+        """
+        # Validate input
+        if not mode_list:
+            raise ValueError("mode_list cannot be empty.")
+
+        if not isinstance(mode_list, list) or not all(
+            isinstance(sublist, list) for sublist in mode_list
+        ):
+            raise TypeError("mode_list must be a list of lists.")
+
+        num_processors = len(mode_list)
+        num_modes = len(mode_list[0])
+
+        # Check consistency across processors
+        if not all(len(sublist) == num_modes for sublist in mode_list):
+            raise ValueError(
+                f"Inconsistent mode counts across processors. "
+                f"Expected {num_modes} modes in all sublists, but got varying lengths."
+            )
+
+        # Validate that all elements are OFField objects
+        for procN, sublist in enumerate(mode_list):
+            for modeN, field in enumerate(sublist):
+                if not isinstance(field, OFField):
+                    raise TypeError(
+                        f"mode_list[{procN}][{modeN}] is not an OFField object. "
+                        f"Got {type(field).__name__} instead."
+                    )
+
+        # Pre-allocate list for better performance
+        converted_modes = []
+
+        # Convert modes: transpose the structure from [proc][mode] to [mode][proc]
+        for j in range(num_modes):
+            # Clone structure from first processor's mode
+            mode = OFField.from_OFField(mode_list[0][j])
+
+            # Pre-allocate lists with known size
+            mode.internalField = [None] * num_processors
+            mode.boundaryField = [None] * num_processors
+
+            # Gather data from all processors for this mode
+            for procN in range(num_processors):
+                mode.internalField[procN] = mode_list[procN][j].internalField
+                mode.boundaryField[procN] = mode_list[procN][j].boundaryField
+
+            mode.parallel = True
+            converted_modes.append(mode)
+
+        return converted_modes
 
 
 def write_mode_worker(args):
