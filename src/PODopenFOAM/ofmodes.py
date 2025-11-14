@@ -1,6 +1,7 @@
 import sys
 import re
 import os
+import gc
 from typing import List, Dict, Any, Optional, Tuple, Union
 
 import multiprocessing
@@ -127,6 +128,10 @@ class PODmodes:
         self._performPOD(self.data_matrix)
         print("Perform POD at time: {:.3f} s".format(time.time() - self.start_time))
 
+        # Free data_matrix memory immediately after POD to reduce memory footprint
+        del self.data_matrix
+        gc.collect()  # Force garbage collection to release memory immediately
+
         self.truncation_error, self.projection_error = self._truncation_error()
 
         if is_parallel:
@@ -134,46 +139,45 @@ class PODmodes:
             boundary_field = first_field.boundaryField
             dimensions = first_field.dimensions
 
-            # Pre-slice cellModes for each processor to avoid repeated slicing
-            cell_modes_slices = [
-                self.cellModes[:, procN_idx[procN] : procN_idx[procN + 1]]
-                for procN in range(self._num_processors)
-            ]
-
-            # Use single pool for both boundary and mode computations
-            with multiprocessing.Pool() as pool:
-                # Prepare boundary computation tasks
-                boundary_tasks = [
-                    (
-                        [f.boundaryField[procN] for f in self.fieldList],
-                        self._coeffs,
-                        data_type,
-                    )
-                    for procN in range(self._num_processors)
-                ]
-                self.boundaryValues = pool.starmap(
-                    self._computeBoundary, boundary_tasks
+            # Compute boundary values sequentially to avoid memory duplication in multiprocessing
+            self.boundaryValues = []
+            for procN in range(self._num_processors):
+                boundaryValue = self._computeBoundary(
+                    [f.boundaryField[procN] for f in self.fieldList],
+                    self._coeffs,
+                    data_type,
                 )
+                self.boundaryValues.append(boundaryValue)
 
-                print(
-                    "Compute boundary values at time: {:.3f} s".format(
-                        time.time() - self.start_time
-                    )
+            print(
+                "Compute boundary values at time: {:.3f} s".format(
+                    time.time() - self.start_time
                 )
+            )
 
-                # Prepare mode creation tasks
-                mode_tasks = [
-                    (
-                        boundary_field[procN],
-                        cell_modes_slices[procN],
-                        self.boundaryValues[procN],
-                        data_type,
-                        dimensions,
-                        is_parallel,
-                    )
-                    for procN in range(self._num_processors)
-                ]
-                self._modes = pool.starmap(self._createModes, mode_tasks)
+            # Create modes sequentially, passing indices instead of sliced arrays
+            self._modes = []
+            for procN in range(self._num_processors):
+                # Use array views (indices) instead of copies
+                start_idx = procN_idx[procN]
+                end_idx = procN_idx[procN + 1]
+                cell_modes_slice = self.cellModes[:, start_idx:end_idx]
+                
+                modes = self._createModes(
+                    boundary_field[procN],
+                    cell_modes_slice,
+                    self.boundaryValues[procN],
+                    data_type,
+                    dimensions,
+                    is_parallel,
+                )
+                self._modes.append(modes)
+                
+                # Clear slice reference to help garbage collector
+                del cell_modes_slice
+            
+            # Force garbage collection after mode creation
+            gc.collect()
         else:
             self.boundaryValues = self._computeBoundary(
                 [f.boundaryField for f in self.fieldList],
