@@ -770,6 +770,9 @@ class OFField:
         """
         Find indices for dimensions, internalField, and boundaryField sections.
 
+        This function performs a single-pass scan through the file content to locate
+        all critical sections efficiently.
+
         Parameters
         ----------
         subcontent : List[bytes]
@@ -793,42 +796,81 @@ class OFField:
         Raises
         ------
         ValueError
-            If internalField is not found in the file.
+            If internalField is not found in the file, or if dimensions are not found.
         """
         dim_idx = None
         data_size = None
         data_idx = None
         boundary_idx = None
-        idx = 0
         internal_field_type = None
+        
+        # Flag to track if we need to find data size
+        searching_for_data_size = False
+        
+        idx = 0
+        n_lines = len(subcontent)
 
-        while idx < len(subcontent):
-            if b"dimensions" in subcontent[idx]:
+        while idx < n_lines:
+            line = subcontent[idx]
+            
+            # Search for dimensions (should appear early in file)
+            if dim_idx is None and b"dimensions" in line:
                 dim_idx = idx
-            if b"internalField" in subcontent[idx]:
-                if b"nonuniform" in subcontent[idx]:
-                    if b"0()" in subcontent[idx]:
+                continue
+            
+            # Search for internalField declaration
+            if internal_field_type is None and b"internalField" in line:
+                if b"nonuniform" in line:
+                    if b"0()" in line:
+                        # Empty nonuniform field
                         data_idx = idx
                         internal_field_type = "nonuniformZero"
+                        data_size = 0
                     else:
+                        # Standard nonuniform field - need to find data size
                         internal_field_type = "nonuniform"
+                        searching_for_data_size = True
                 else:
+                    # Uniform field
                     internal_field_type = "uniform"
                     data_idx = idx
-            if data_size is None and internal_field_type == "nonuniform":
-                try:
-                    data_size = int(subcontent[idx])
-                    data_idx = idx
-                    idx = data_idx + data_size + 1
-                except ValueError:
-                    pass
-            if b"boundaryField" in subcontent[idx]:
+                    data_size = None
+            
+            # Search for data size (line after nonuniform declaration)
+            elif searching_for_data_size:
+                stripped_line = line.strip()
+                if stripped_line and not stripped_line.startswith(b'//'):
+                    try:
+                        data_size = int(stripped_line)
+                        data_idx = idx
+                        searching_for_data_size = False
+                        # Skip ahead to after the data block for efficiency
+                        # data_idx is the line with the size number
+                        # +1 for opening '(', +data_size for all data lines, reaching past closing ')'
+                        idx = data_idx + data_size + 1
+                        continue
+                    except ValueError:
+                        # Not a valid integer, continue searching
+                        pass
+            
+            # Search for boundaryField (should appear after internalField)
+            if b"boundaryField" in line:
                 boundary_idx = idx
+                # Found all required information, exit early
                 break
+            
             idx += 1
 
+        # Validation
         if internal_field_type is None:
             raise ValueError("internalField not found in the file.")
+        
+        if dim_idx is None:
+            raise ValueError("dimensions not found in the file.")
+        
+        if boundary_idx is None:
+            raise ValueError("boundaryField not found in the file.")
+        
         return data_idx, boundary_idx, dim_idx, data_size, internal_field_type
 
     def writeField(
