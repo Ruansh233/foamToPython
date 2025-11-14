@@ -49,6 +49,7 @@ class PODmodes:
         self._num_processors: int = (
             fieldList[0]._num_processors if fieldList[0].parallel else 1
         )
+        self._mode_convert: bool = True
 
         self.start_time = time.time()
         self.parallel = fieldList[0].parallel
@@ -75,8 +76,11 @@ class PODmodes:
         if not hasattr(self, "_modes"):
             self.getModes()
         if self.fieldList[0].parallel:
-            # Flatten the list of lists into a single list
-            return [self._modes[i][: self._rank] for i in range(len(self._modes))]
+            if not self._mode_convert:
+                # Flatten the list of lists into a single list
+                return [self._modes[i][: self._rank] for i in range(len(self._modes))]
+            else:
+                return self._convert_mode_list(self._modes)[: self._rank]
         else:
             return self._modes[: self._rank]
 
