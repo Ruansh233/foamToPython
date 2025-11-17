@@ -162,7 +162,7 @@ class PODmodes:
                 start_idx = procN_idx[procN]
                 end_idx = procN_idx[procN + 1]
                 cell_modes_slice = self.cellModes[:, start_idx:end_idx]
-                
+
                 modes = self._createModes(
                     boundary_field[procN],
                     cell_modes_slice,
@@ -172,10 +172,10 @@ class PODmodes:
                     is_parallel,
                 )
                 self._modes.append(modes)
-                
+
                 # Clear slice reference to help garbage collector
                 del cell_modes_slice
-            
+
             # Force garbage collection after mode creation
             gc.collect()
         else:
@@ -618,7 +618,9 @@ class PODmodes:
 
         return _modes
 
-    def writeModes(self, outputDir: str, fieldName: str = "PODmode") -> None:
+    def writeModes(
+        self, outputDir: str, fieldName: str = "PODmode", precision: int = 10
+    ) -> None:
         """
         Write the POD modes to files. Should be called after `getModes`.
 
@@ -628,6 +630,8 @@ class PODmodes:
             The directory where the mode files will be saved, e.g., case folder.
         fieldName : str, optional
             The base name for the mode files, by default 'PODmode'.
+        precision : int, optional
+            The numerical precision for writing mode files, by default 10.
 
         Returns
         -------
@@ -644,7 +648,7 @@ class PODmodes:
             )
         if self.fieldList[0].parallel:
             tasks = [
-                (procN, j + 1, mode, outputDir, fieldName)
+                (procN, j + 1, mode, outputDir, fieldName, precision)
                 for procN, modeList in enumerate(self._modes)
                 for j, mode in enumerate(modeList[: self._rank])
             ]
@@ -652,7 +656,7 @@ class PODmodes:
                 pool.map(write_mode_worker, tasks)
         else:
             tasks = [
-                (i + 1, mode, outputDir, fieldName)
+                (i + 1, mode, outputDir, fieldName, precision)
                 for i, mode in enumerate(self._modes[: self._rank])
             ]
             with multiprocessing.Pool() as pool:
@@ -718,66 +722,68 @@ class PODmodes:
         # Validate input
         if y.ndim != 2:
             raise ValueError(f"Input must be a 2D array, got {y.ndim}D array.")
-        
+
         N, M = y.shape
-        
+
         if N == 0 or M == 0:
             raise ValueError(f"Input array has invalid shape: ({N}, {M}).")
-        
+
         # Auto-select algorithm based on matrix dimensions
         if POD_algo == "auto":
             # Use eigenvalue method when snapshots << spatial points (more efficient)
             POD_algo = "eigen" if N < M else "svd"
             print(f"Auto-selected POD algorithm: {POD_algo} (N={N}, M={M})")
-        
+
         if POD_algo == "svd":
             # SVD-based POD (direct method)
             # Recommended when N >= M (many snapshots or comparable to spatial points)
             u, s_all, cellModes = svd(y, full_matrices=False)
-            
+
             # Use broadcasting instead of np.diag for efficiency
             _coeffs = u * s_all  # Broadcasting: (N, N) * (N,) -> (N, N)
-            
+
             print(f"POD_SVD reduction completed (computed {len(s_all)} modes).")
-            
+
         elif POD_algo == "eigen":
             # Eigenvalue-based POD (snapshot method / method of snapshots)
             # Recommended when N << M (few snapshots, many spatial points)
             # More efficient as it works with NxN correlation matrix instead of MxM
-            
+
             # Compute correlation matrix C = Y * Y^T (N x N instead of M x M)
             C: np.ndarray = y @ y.T
-            
+
             # Use eigh for symmetric matrix (faster and more stable than eig)
             eigenvalues, U = np.linalg.eigh(C)
-            
+
             # Sort in descending order
             sorted_indices = np.argsort(eigenvalues)[::-1]
             sorted_eigenvalues = eigenvalues[sorted_indices]
             U = U[:, sorted_indices]
-            
+
             # Filter out negative eigenvalues from numerical errors
             positive_mask = sorted_eigenvalues > tol
             if not np.all(positive_mask):
                 num_filtered = np.sum(~positive_mask)
-                print(f"Warning: Filtered {num_filtered} near-zero/negative eigenvalues (< {tol}).")
+                print(
+                    f"Warning: Filtered {num_filtered} near-zero/negative eigenvalues (< {tol})."
+                )
                 sorted_eigenvalues = sorted_eigenvalues[positive_mask]
                 U = U[:, positive_mask]
-            
+
             # Compute singular values from eigenvalues
             s_all = np.sqrt(np.maximum(sorted_eigenvalues, 0))  # Ensure non-negative
-            
+
             # Use broadcasting for coefficients (more efficient than np.diag)
             _coeffs = U * s_all  # Broadcasting: (N, k) * (k,) -> (N, k)
-            
+
             # Vectorized computation of spatial modes (instead of loop)
             # cellModes[i, :] = (1 / s_all[i]) * (U[:, i]^T @ y)
             # This is equivalent to: cellModes = diag(1/s_all) @ U^T @ y
             # Using broadcasting: (U^T @ y) / s_all[:, None]
             cellModes = (U.T @ y) / s_all[:, np.newaxis]
-            
+
             print(f"POD_eigen reduction completed (computed {len(s_all)} modes).")
-            
+
         else:
             raise ValueError("POD_algo must be 'svd', 'eigen', or 'auto'.")
 
@@ -1037,6 +1043,7 @@ class PODmodes:
         outputDir: str,
         timeDir: int,
         fieldName: str = "recField",
+        precision: int = 10,
     ):
         """
         Write the reconstructed field to files.
@@ -1051,6 +1058,8 @@ class PODmodes:
             The time directory for the reconstructed field files.
         fieldName : str, optional
             The base name for the reconstructed field files, by default 'recField'.
+        precision : int, optional
+            The numerical precision for writing the reconstructed field files, by default 10.
 
         Returns
         -------
@@ -1073,7 +1082,7 @@ class PODmodes:
                     "For parallel fields, recOFFields should be a list with length equal to the number of processors."
                 )
             tasks = [
-                (procN, timeDir, recOFField[procN], outputDir, fieldName)
+                (procN, timeDir, recOFField[procN], outputDir, fieldName, precision)
                 for procN in range(self._num_processors)
             ]
             with multiprocessing.Pool() as pool:
@@ -1084,7 +1093,7 @@ class PODmodes:
                 raise ValueError(
                     "For non-parallel fields, recOFFields should be a single OFField object."
                 )
-            recOFField.writeField(outputDir, timeDir, fieldName)
+            recOFField.writeField(outputDir, timeDir, fieldName, precision)
 
     @staticmethod
     def _convert_mode_list(mode_list: List[List[OFField]]) -> List[OFField]:
@@ -1185,18 +1194,19 @@ def write_mode_worker(args):
             mode (OFField): The POD mode object to write.
             outputDir (str): Output directory path.
             fieldName (str): Name for the output field file.
+            precision (int): Numerical precision for writing the field.
 
     raises
     ------
     FileNotFoundError
         If the parallel directory does not exist.
     """
-    procN, j, mode, outputDir, fieldName = args
+    procN, j, mode, outputDir, fieldName, precision = args
     mode.parallel = False
     output_path = f"{outputDir}/processor{procN}"
     if not os.path.exists(output_path):
         raise FileNotFoundError(f"Processor directory {output_path} does not exist.")
-    mode.writeField(output_path, j, fieldName)
+    mode.writeField(output_path, j, fieldName, precision)
     mode.parallel = True
 
 
@@ -1212,6 +1222,7 @@ def write_single_mode(args):
             mode (OFField): The POD mode object to write.
             outputDir (str): Output directory path.
             fieldName (str): Name for the output field file.
+            precision (int): Numerical precision for writing the field.
     """
-    i, mode, outputDir, fieldName = args
-    mode.writeField(outputDir, i, fieldName)
+    i, mode, outputDir, fieldName, precision = args
+    mode.writeField(outputDir, i, fieldName, precision)
