@@ -4,6 +4,7 @@ import os
 import re
 import mmap
 import multiprocessing
+multiprocessing.set_start_method("spawn", force=True)
 import copy
 from typing import List, Dict, Any, Optional, Tuple, Union
 from .headerEnd import *
