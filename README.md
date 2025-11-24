@@ -1,6 +1,15 @@
 This is an ongoing repository to read OpenFOAM data into numpy array.
-It is faster than [FluidFoam](https://github.com/fluiddyn/fluidfoam), [PyFoam](https://pypi.org/project/PyFoam/), and [foamlib](https://github.com/gerlero/foamlib) in reading fields.
-However, the aforementioned packages have more functions compared to this one.
+It is faster than two widely used packages, [FluidFoam](https://github.com/fluiddyn/fluidfoam) and [foamlib](https://github.com/gerlero/foamlib), in reading fields, as shwon below 
+
+![Performance Comparison](foamToPython_comparison.png)
+
+The comparsion is performed for 4 conditions. 
+1. Scalar fields with 5 million cells. 
+2. Vector fields with 5 million cells.
+3. Scalar fields with 36 million cells.
+4. Vector fields with 36 million cells.
+
+Note that the aforementioned packages have more functions compared to the current library. [PyFoam](https://pypi.org/project/PyFoam/) is not involved in the comparsion due to the problem of version compatibility.
 
 ### <span style="color:blue;">OFField</span> class
 The class could read OpenFOAM fields. 
