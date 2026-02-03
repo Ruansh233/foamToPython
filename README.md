@@ -1,86 +1,432 @@
-This is an ongoing repository to read OpenFOAM data into numpy array.
-It is faster than two widely used packages, [FluidFoam](https://github.com/fluiddyn/fluidfoam) and [foamlib](https://github.com/gerlero/foamlib), in reading fields, as shwon below 
+# foamToPython
 
-![Performance Comparison](foamToPython_comparison.png)
+[![PyPI version](https://badge.fury.io/py/foamToPython.svg)](https://pypi.org/project/foamToPython/)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![GitHub](https://img.shields.io/github/license/Ruansh233/foamToPython)](https://github.com/Ruansh233/foamToPython)
 
-The comparsion is performed for 4 conditions. 
-1. Scalar fields with 5 million cells. 
-2. Vector fields with 5 million cells.
-3. Scalar fields with 36 million cells.
-4. Vector fields with 36 million cells.
+**foamToPython** is a high-performance Python package for reading and writing OpenFOAM field data and performing Proper Orthogonal Decomposition (POD) analysis. It provides a fast and efficient interface between OpenFOAM simulations and Python/NumPy, supporting both serial and parallel case formats.
 
-Note that the aforementioned packages have more functions compared to the current library. [PyFoam](https://pypi.org/project/PyFoam/) is not involved in the comparsion due to the problem of version compatibility.
+## Why foamToPython?
 
-### <span style="color:blue;">OFField</span> class
-The class could read OpenFOAM fields. 
-It can process volScalarField or volVectorField, either uniform or non-uniform internalField.
+### 🚀 Performance
+**~10x faster** than popular alternatives like [FluidFoam](https://github.com/fluiddyn/fluidfoam) and [foamlib](https://github.com/gerlero/foamlib) when reading fields, especially for large-scale parallel cases.
 
-#### read field, e.g., U
-`U = readOFData.OFField('case/1/U', 'vector', read_data=True)`
+### ✨ Key Features
+- **High Performance**: Optimized I/O operations for reading OpenFOAM fields
+- **Parallel Support**: Seamlessly handles both serial and parallel OpenFOAM cases
+- **Field Types**: Supports scalar and vector fields (volScalarField, volVectorField)
+- **Flexible Interface**: Read uniform and non-uniform internal fields
+- **POD Analysis**: Built-in Proper Orthogonal Decomposition for modal analysis
+- **NumPy Integration**: Direct conversion to/from NumPy arrays
+- **Simple API**: Easy-to-use, Pythonic interface
 
-The arguments are:
-1. _filename_: the path of the field file.
-2. _data_type_: the type of the field, e.g., "scalar", "vector", "label".
-3. _read_data_: whether to read the field when initializing the class.
-4. _parallel_: whether the case is run in parallel.
+## Performance Comparison
 
-If read_data is False, the field will not be read when initializing the class. You can use `U._readField()` to read it later, or access `U.internalField` or `U.boundaryField`, which will trigger the reading of the field.
+The following benchmark demonstrates foamToPython's superior performance across different scenarios:
 
-The package can read parallel case, e.g., `U = readOFData.OFField('case/1/U', 'vector', parallel=True)`.
+![Performance Comparison](https://raw.githubusercontent.com/Ruansh233/foamToPython/main/foamToPython_comparison.png)
 
-#### load <span style="color:blue;">internalField</span> and <span style="color:blue;">boundaryField</span>
+### Benchmark Details
 
-`U_cell = U.internalField`
-`U_boundary = U.boundaryField`
+The comparison was performed under four different conditions:
+1. Scalar fields with 5 million cells
+2. Vector fields with 5 million cells  
+3. Scalar fields with 36 million cells
+4. Vector fields with 36 million cells
 
-1. _U_cell_ is a numpy array, store the fields values. The length is 1 for the uniform internal field.
-2. _U_boundary_ is a dict store each patches. For each patch, it contain _type_ for the type of boundary. If the _type_ is _fixedValue_, the numpy array can be accessed by the key _value_. For example: `U.boundaryField['velocityInlet']['value']`
+**Test Environment**: Intel Xeon Platinum 8358 CPU (64 cores @ 2.60GHz), 256GB RAM, Red Hat Enterprise Linux
 
-For parallel case, both internalField and boundaryField are read from all processors and stored as lists. For example, `U.internalField[0]` is the internalField from processor 0.
+foamToPython shows its greatest advantage when reading large parallel cases with 36 million cells, achieving approximately **10x speedup** over FluidFoam and foamlib.
 
-#### <span style="color:blue;">writeField</span>
-You can modify the data of _U_ and then write it as OF field. 
+> **Note**: The compared packages offer additional functionalities not currently included in foamToPython. [PyFoam](https://pypi.org/project/PyFoam/) was excluded due to version compatibility issues.
 
-The arguments are:
-1. _path_: the path to write the field. It can contain `<timeDir>` and `<fieldName>`, which will be replaced by the arguments `timeDir` and `fieldName` if provided.
-2. _timeDir_: the time directory to write the field. Default is `None`.
-3. _fieldName_: the name of the field to write. Default is `None`.
+## Installation
 
-Same function can be used to write parallel case, e.g., `U.writeField('case/<timeDir>/<fieldName>')`.
+### From PyPI (Recommended)
 
-Therefore, you can use two types of inputs, e.g.,
-1. `U.writeField('case/<timeDir>/<fieldName>')`.
-2. `U.writeField('case/test', timeDir=<timeDir>, fieldName=<fieldName>)`. Note that `timeDir` and `fieldName` are needed when using **Paraview** to read the fields.
+```bash
+pip install foamToPython
+```
 
-### <span style="color:blue;">readList</span> function
-The function could read field value like velocity and pressure.
-The data type are: "lable", "scalar", "vector".
+### From Source
 
-For example: `U = readList("1/U", "vector").`
+```bash
+pip install git+https://github.com/Ruansh233/foamToPython.git
+```
 
-### <span style="color:blue;">readListList</span> function
-The function could read ListList, like the cellZones file.
-The data type are: "lable", "scalar", "vector".
+### Development Installation
 
-For example: `cellZones = readList("constant/polyMesh/cellZones", "label")`.
+```bash
+git clone https://github.com/Ruansh233/foamToPython.git
+cd foamToPython
+pip install -e .
+```
 
-### Perform <span style="color:blue;">POD</span> to openfoam fields.
-Please check the submodule _PODopenFOAM_ and the class under it _PODmodes_, which can be called `foamToPython.PODmodes`. It can be created as,
+## Quick Start
 
-`pod = PODmodes(U, POD_algo=<POD_algo>, rank=<rank>)`.
+```python
+from foamToPython import OFField
 
-The arguments are:
-1. _U_: the OFField class instance, which contains the data to perform POD.
-2. _POD_algo_: the algorithm to perform POD, can be "svd" or "eigen". Default is "eigen".
-3. _rank_: the number of modes to compute. Default is 10, which means 10 modes are computed.
+# Read a velocity field from an OpenFOAM case
+U = OFField('case/1/U', 'vector', read_data=True)
 
-The modes can be exported with OpenFOAM format using
-`pod.writeModes(outputDir, fieldName=<fieldName>)`.
+# Access internal field data (returns NumPy array)
+velocity_data = U.internalField
 
-The arguments are:
-1. _outputDir_: the directory to write the modes. The modes will be written in folders `outputDir/1`, `outputDir/2`, ..., `outputDir/rank`.
-2. _fieldName_: the name of the field to write. Default is `None`.
+# Access boundary field data (returns dict)
+inlet_velocity = U.boundaryField['inlet']['value']
 
-### Parallel case
-The package can read and write parallel case. 
-However, the speed is slower than the serial case, and it will be improved in the future.
+# Modify the field and write it back
+U.internalField *= 1.5  # Scale velocity by 1.5
+U.writeField('case/2/U')
+```
+
+## Usage Guide
+
+### Reading OpenFOAM Fields
+
+#### Basic Field Reading
+
+The `OFField` class is the main interface for reading OpenFOAM fields. It supports both scalar and vector fields with uniform or non-uniform internal fields.
+
+```python
+from foamToPython import OFField
+
+# Read a vector field (e.g., velocity)
+U = OFField('case/1/U', 'vector', read_data=True)
+
+# Read a scalar field (e.g., pressure)
+p = OFField('case/1/p', 'scalar', read_data=True)
+```
+
+**Arguments**:
+- `filename`: Path to the field file
+- `data_type`: Field type - `"scalar"`, `"vector"`, or `"label"`
+- `read_data`: Whether to read the field immediately (default: `True`)
+- `parallel`: Whether the case is run in parallel (default: `False`)
+
+#### Lazy Loading
+
+For large cases, you can defer reading until needed:
+
+```python
+# Initialize without reading
+U = OFField('case/1/U', 'vector', read_data=False)
+
+# Data is automatically read when accessed
+velocity = U.internalField  # Triggers reading
+```
+
+#### Reading Parallel Cases
+
+```python
+# Read from a parallel case
+U = OFField('case/1/U', 'vector', parallel=True)
+
+# Internal field is stored as a list (one per processor)
+velocity_proc0 = U.internalField[0]
+velocity_proc1 = U.internalField[1]
+# ... etc.
+```
+
+### Accessing Field Data
+
+#### Internal Field
+
+```python
+# Get internal field as NumPy array
+U_internal = U.internalField
+
+# For uniform fields, length is 1
+# For non-uniform fields, shape is (n_cells, n_components)
+print(U_internal.shape)  # e.g., (1000000, 3) for vector field
+```
+
+#### Boundary Field
+
+```python
+# Access boundary data (returns dictionary)
+boundaries = U.boundaryField
+
+# Get specific patch
+inlet_data = U.boundaryField['inlet']
+
+# Check boundary type
+bc_type = inlet_data['type']  # e.g., 'fixedValue', 'zeroGradient'
+
+# Access boundary values (for fixedValue type)
+inlet_velocity = inlet_data['value']  # NumPy array
+```
+
+### Writing OpenFOAM Fields
+
+#### Basic Writing
+
+```python
+# Modify field data
+U.internalField *= 2.0
+
+# Write to new time directory
+U.writeField('case/2/U')
+```
+
+#### Using Placeholders
+
+```python
+# Method 1: Using placeholders
+U.writeField('case/<timeDir>/<fieldName>', timeDir='2', fieldName='U')
+
+# Method 2: Direct path
+U.writeField('case/2/myVelocity')
+```
+
+**Important**: When using with ParaView, ensure you provide `timeDir` and `fieldName` arguments for proper visualization.
+
+#### Writing Parallel Cases
+
+```python
+# Works automatically for parallel cases
+U_parallel = OFField('case/1/U', 'vector', parallel=True)
+U_parallel.writeField('case/2/U')
+```
+
+### Reading Lists and ListLists
+
+#### Reading Simple Lists
+
+```python
+from foamToPython import readList
+
+# Read a list field
+boundary_data = readList("0/boundaryField", "scalar")
+```
+
+#### Reading ListList Data
+
+```python
+from foamToPython import readListList
+
+# Read cellZones (ListList format)
+cellZones = readListList("constant/polyMesh/cellZones", "label")
+```
+
+### Proper Orthogonal Decomposition (POD)
+
+foamToPython includes built-in POD capabilities through the `PODmodes` class in the `PODopenFOAM` submodule.
+
+#### Performing POD Analysis
+
+```python
+from foamToPython import OFField
+from foamToPython.PODmodes import PODmodes
+
+# Read multiple snapshots (time steps)
+snapshots = []
+for time in ['1', '2', '3', '4', '5']:
+    U = OFField(f'case/{time}/U', 'vector', read_data=True)
+    snapshots.append(U)
+
+# Create POD analysis
+pod = PODmodes(
+    snapshots, 
+    POD_algo='eigen',  # or 'svd'
+    rank=10            # number of modes to compute
+)
+
+# Access POD modes and coefficients
+modes = pod.modes
+coefficients = pod.coefficients
+singular_values = pod.singular_values
+```
+
+**Arguments**:
+- `U`: List of `OFField` instances or NumPy array of snapshots
+- `POD_algo`: Algorithm for POD computation - `"eigen"` (default) or `"svd"`
+- `rank`: Number of modes to compute (default: 10)
+
+#### Exporting POD Modes
+
+```python
+# Export modes in OpenFOAM format
+pod.writeModes(
+    outputDir='POD_modes',
+    fieldName='U_mode'
+)
+
+# Modes are written to: POD_modes/1/U_mode, POD_modes/2/U_mode, ..., POD_modes/10/U_mode
+```
+
+**Arguments**:
+- `outputDir`: Directory to write the modes
+- `fieldName`: Name for the mode fields (optional)
+
+The exported modes can be visualized directly in ParaView using the standard OpenFOAM reader.
+
+## Examples
+
+### Example 1: Basic Field Manipulation
+
+```python
+from foamToPython import OFField
+
+# Read velocity field
+U = OFField('case/100/U', 'vector')
+
+# Scale the velocity field
+U.internalField *= 1.2
+
+# Write to new time directory  
+U.writeField('case/120/U')
+
+print(f"Velocity field shape: {U.internalField.shape}")
+print(f"Boundary patches: {list(U.boundaryField.keys())}")
+```
+
+### Example 2: Working with Parallel Cases
+
+```python
+from foamToPython import OFField
+import numpy as np
+
+# Read from parallel case (e.g., decomposed with 4 processors)
+p = OFField('case/final/p', 'scalar', parallel=True)
+
+# Concatenate data from all processors
+p_combined = np.concatenate([p.internalField[i] for i in range(4)])
+
+# Compute statistics
+print(f"Global min pressure: {p_combined.min()}")
+print(f"Global max pressure: {p_combined.max()}")
+print(f"Mean pressure: {p_combined.mean()}")
+```
+
+### Example 3: POD-based Flow Analysis
+
+```python
+from foamToPython import OFField
+from foamToPython.PODmodes import PODmodes
+import numpy as np
+
+# Read snapshot series
+times = np.arange(0, 10, 0.5)
+snapshots = [OFField(f'case/{t}/U', 'vector') for t in times]
+
+# Perform POD
+pod = PODmodes(snapshots, POD_algo='svd', rank=5)
+
+# Analyze energy content
+energy = pod.singular_values**2
+total_energy = energy.sum()
+cumulative_energy = np.cumsum(energy) / total_energy
+
+print("Energy captured by each mode:")
+for i, e in enumerate(cumulative_energy):
+    print(f"Mode {i+1}: {e*100:.2f}%")
+
+# Export dominant modes
+pod.writeModes('POD_analysis', fieldName='U_pod')
+```
+
+### Example 4: Batch Processing
+
+```python
+from foamToPython import OFField
+import glob
+
+# Process all time directories
+case_path = 'case'
+time_dirs = sorted(glob.glob(f'{case_path}/[0-9]*'))
+
+for time_dir in time_dirs:
+    # Read field
+    U = OFField(f'{time_dir}/U', 'vector')
+    
+    # Compute velocity magnitude
+    U_mag = np.linalg.norm(U.internalField, axis=1)
+    
+    print(f"Time {time_dir.split('/')[-1]}: "
+          f"Max velocity = {U_mag.max():.3f} m/s")
+```
+
+## Supported Field Types
+
+- **Scalar Fields**: `volScalarField` (e.g., pressure, temperature)
+- **Vector Fields**: `volVectorField` (e.g., velocity)
+- **Label Fields**: Integer fields (e.g., cell labels)
+- **Uniform Fields**: Fields with constant values
+- **Non-uniform Fields**: Fields with spatially varying values
+
+## Performance Tips
+
+1. **Use `read_data=False`** for large cases if you don't need immediate access
+2. **Parallel cases** are currently slower than serial - reconstruction before reading may be faster for small processor counts
+3. **Pre-allocate arrays** when processing multiple time steps
+4. **Use NumPy operations** directly on `internalField` for vectorized performance
+
+## Known Limitations
+
+- Parallel case reading is functional but slower than serial; performance improvements are planned
+- Currently focuses on `volScalarField` and `volVectorField`; support for other field types coming soon
+- Writing capabilities are optimized for internal and boundary fields; some advanced OpenFOAM features may not be fully supported
+
+## Roadmap
+
+- [ ] Improve parallel case reading performance
+- [ ] Support for additional field types (tensor fields, etc.)
+- [ ] Mesh reading capabilities
+- [ ] Integration with visualization tools
+- [ ] Extended POD features (SPOD, DMD)## Contributing
+
+Contributions are welcome! If you'd like to contribute, please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+Please ensure your code follows the existing style and includes appropriate tests.
+
+## Citation
+
+If you use foamToPython in your research, please cite:
+
+```bibtex
+@software{foamToPython2024,
+  author = {Ruan, Shenhui},
+  title = {foamToPython: High-Performance OpenFOAM Field Reader for Python},
+  year = {2024},
+  url = {https://github.com/Ruansh233/foamToPython}
+}
+```
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Author
+
+**Shenhui Ruan**  
+Email: shenhui.ruan@kit.edu  
+GitHub: [@Ruansh233](https://github.com/Ruansh233)
+
+## Related Projects
+
+- [PODImodels](https://github.com/Ruansh233/PODImodels) - POD-based interpolation models for reduced-order modeling
+- [localMode](https://github.com/Ruansh233/localMode) - Local mode analysis tools
+- [FluidFoam](https://github.com/fluiddyn/fluidfoam) - Alternative OpenFOAM reader
+- [foamlib](https://github.com/gerlero/foamlib) - Another OpenFOAM interface for Python
+
+## Acknowledgments
+
+This package was developed to provide high-performance data exchange between OpenFOAM and Python for CFD post-processing and reduced-order modeling applications.
+
+## Support
+
+If you encounter any issues or have questions:
+- Open an issue on [GitHub](https://github.com/Ruansh233/foamToPython/issues)
+- Contact: shenhui.ruan@kit.edu
+
+---
+
+**Star ⭐ the repository** if you find foamToPython useful!
