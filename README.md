@@ -102,7 +102,7 @@ p = OFField('case/1/p', 'scalar', read_data=True)
 **Arguments**:
 - `filename`: Path to the field file
 - `data_type`: Field type - `"scalar"`, `"vector"`, or `"label"`
-- `read_data`: Whether to read the field immediately (default: `True`)
+- `read_data`: Whether to read the field immediately (default: `False`)
 - `parallel`: Whether the case is run in parallel (default: `False`)
 
 #### Lazy Loading
@@ -170,17 +170,17 @@ U.internalField *= 2.0
 U.writeField('case/2/U')
 ```
 
-#### Using Placeholders
+#### Writing API Options
 
 ```python
-# Method 1: Using placeholders
-U.writeField('case/<timeDir>/<fieldName>', timeDir='2', fieldName='U')
+# Method 1: Single path (case/time/field)
+U.writeField('case/2/U')
 
-# Method 2: Direct path
-U.writeField('case/2/myVelocity')
+# Method 2: Explicit arguments
+U.writeField('case', timeDir=2, fieldName='U')
 ```
 
-**Important**: When using with ParaView, ensure you provide `timeDir` and `fieldName` arguments for proper visualization.
+Both forms write to the same OpenFOAM field destination.
 
 #### Writing Parallel Cases
 

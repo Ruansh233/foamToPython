@@ -1,5 +1,4 @@
 import numpy as np
-import sys
 import re
 from typing import List, Tuple, Optional
 from .headerEnd import *
@@ -22,7 +21,7 @@ def _check_data_type(data: bytes) -> str:
     elif re.match(r"^\d+$", data):
         return "label"
     else:
-        sys.exit("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
+        raise ValueError("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
 
 
 def _extractList(content: List[bytes], data_type: Optional[str]) -> np.ndarray:
@@ -60,7 +59,7 @@ def _extractList(content: List[bytes], data_type: Optional[str]) -> np.ndarray:
         )
 
     else:
-        sys.exit("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
+        raise ValueError("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
 
     return data_array
 
@@ -101,21 +100,21 @@ def _extractListList(content: List[bytes], data_type: str) -> np.ndarray:
                 np.fromstring(joined_coords, sep=" ", dtype=float).reshape(num_data_, 3)
             )
         else:
-            sys.exit("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
+            raise ValueError("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
 
         subcontent = subcontent[data_start_idx + num_data_ + 1 :]
 
-    return np.array(data_list)
+    return np.array(data_list, dtype=object)
 
 
 def readListList(fileName: str, data_type: str) -> np.ndarray:
     try:
         with open(fileName, "rb") as f:
-            pass
-    except FileNotFoundError:
-        sys.exit(f"File {fileName} not found. Please check the file path.")
-    with open(f"{fileName}", "rb") as f:
-        return _extractListList(f.readlines(), data_type)
+            return _extractListList(f.readlines(), data_type)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"File {fileName} not found. Please check the file path."
+        ) from exc
 
 
 def _extractUniformList(file: List[bytes], data_type: str) -> Tuple[int, np.ndarray]:
@@ -139,29 +138,29 @@ def _extractUniformList(file: List[bytes], data_type: str) -> Tuple[int, np.ndar
                         ]
                 )
             else:
-                sys.exit("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
+                raise ValueError(
+                    "Unknown data_type. please use 'label', 'scalar' or 'vector'."
+                )
 
 
 def readList(fileName: str, data_type: str, fullLength: bool = True) -> np.ndarray:
     try:
         with open(fileName, "rb") as f:
-            pass
-    except FileNotFoundError:
-        sys.exit(f"File {fileName} not found. Please check the file path.")
-    with open(f"{fileName}", "rb") as f:
-        file_content = f.readlines()
-        file_length = len(file_content)
-        if file_length == 1:
-            length, data = _extractUniformList(file_content, data_type)
-            if fullLength:
-                if data_type == "vector":
-                    return np.tile(data, (length, 1))
-                else:
-                    return np.repeat(data, length, axis=0)
-            else:
-                return data
-        else:
-            return _extractList(file_content, data_type)
+            file_content = f.readlines()
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"File {fileName} not found. Please check the file path."
+        ) from exc
+
+    file_length = len(file_content)
+    if file_length == 1:
+        length, data = _extractUniformList(file_content, data_type)
+        if fullLength:
+            if data_type == "vector":
+                return np.tile(data, (length, 1))
+            return np.repeat(data, length, axis=0)
+        return data
+    return _extractList(file_content, data_type)
 
 
 def writeList(
@@ -199,7 +198,7 @@ def writeList(
             for point in data:
                 output.append(f"({point[0]:.8e} {point[1]:.8e} {point[2]:.8e})\n")
         else:
-            sys.exit("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
+            raise ValueError("Unknown data_type. please use 'label', 'scalar' or 'vector'.")
         output.append(")\n")
         output.append(ender)
         f.write("".join(output))
