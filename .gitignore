@@ -56,6 +56,15 @@ venv.bak/
 # pytest
 .pytest_cache/
 
+# OpenFOAM generated case output
+examples/cavity/processor*/
+examples/cavity/postProcessing/
+examples/cavity/log.*
+examples/cavity/foamToPython_serial/
+examples/cavity/foamToPython_parallel/
+examples/cavity/[1-9]*/
+examples/cavity/[0-9]*.[0-9]*/
+
 # mypy
 .mypy_cache/
 *.mypy_cache/

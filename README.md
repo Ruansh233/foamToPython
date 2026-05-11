@@ -190,6 +190,29 @@ U_parallel = OFField('case/1/U', 'vector', parallel=True)
 U_parallel.writeField('case/2/U')
 ```
 
+### OpenFOAM Cavity Validation Example
+
+The repository includes a real OpenFOAM validation example for the v2312
+`icoFoam/cavity` tutorial. It runs the serial cavity case, validates read/write
+round trips for `U` and `p`, decomposes the latest time, and validates parallel
+processor fields:
+
+```bash
+pip install foamlib
+python3 examples/validate_cavity_serial_parallel.py
+```
+
+By default the example uses:
+
+```text
+examples/cavity
+```
+
+It runs OpenFOAM commands via `foamlib` using the OpenFOAM environment already
+available in your current shell. If OpenFOAM is not sourced/installed, the
+script exits with a message telling you to install/source OpenFOAM first. Use
+`--work-dir` to choose where the temporary validation case is written.
+
 ### Reading Lists and ListLists
 
 #### Reading Simple Lists

@@ -5,6 +5,6 @@ authors:
   given-names: "Shenhui"
   orcid: "https://orcid.org/0009-0006-9046-0220"
 title: "foamToPython: An IO package for OpenFOAM and numpy"
-version: 0.0.1
+version: 0.0.2
 date-released: 2025-10-02
 url: "https://github.com/Ruansh233/foamToPython.git"
