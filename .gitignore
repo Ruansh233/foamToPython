@@ -37,8 +37,6 @@ pip-delete-this-directory.txt
 # Virtual environments
 .env/
 .venv/
-.vscode/
-.copilot/
 env/
 venv/
 ENV/
@@ -75,7 +73,6 @@ examples/cavity/[0-9]*.[0-9]*/
 .idea/
 .vscode/
 *.swp
-AGENTS.md
 
 # MacOS files
 .DS_Store
