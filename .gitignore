@@ -37,6 +37,8 @@ pip-delete-this-directory.txt
 # Virtual environments
 .env/
 .venv/
+.vscode/
+.copilot/
 env/
 venv/
 ENV/

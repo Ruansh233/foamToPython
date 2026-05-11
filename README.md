@@ -4,7 +4,7 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![GitHub](https://img.shields.io/github/license/Ruansh233/foamToPython)](https://github.com/Ruansh233/foamToPython)
 
-**foamToPython** is a high-performance Python package for reading and writing OpenFOAM field data and performing Proper Orthogonal Decomposition (POD) analysis. It provides a fast and efficient interface between OpenFOAM simulations and Python/NumPy, supporting both serial and parallel case formats.
+**[foamToPython](https://github.com/Ruansh233/foamToPython)** is a high-performance Python package for reading and writing OpenFOAM field data and performing Proper Orthogonal Decomposition (POD) analysis. It provides a fast and efficient interface between OpenFOAM simulations and Python/NumPy, supporting both serial and parallel case formats.
 
 ## Why foamToPython?
 
